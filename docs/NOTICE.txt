@@ -1,0 +1,16 @@
+EType third-party notice
+
+Offline English-Chinese data is derived from skywind3000/ECDICT.
+https://github.com/skywind3000/ECDICT
+The upstream MIT license is included in licenses/ECDICT-LICENSE.
+See data/manifest.json for the exact source and output SHA-256 hashes.
+Upstream entries are filtered to single words, short Chinese candidates and
+common/exam vocabulary. Small everyday candidate overrides are in the source
+project at data/overrides.json. Inflections derive from upstream exchange fields.
+Source phonetics are predominantly British and are not automatically relabeled
+as American. Spoken accent is selected independently from installed local voices.
+
+Built with LLVM MinGW. Statically linked runtime notices are included in
+licenses/LLVM-LICENSE.txt and licenses/COPYING*. The development toolchain
+itself is not needed to run EType.
+https://github.com/mstorsjo/llvm-mingw

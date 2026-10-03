@@ -1,0 +1,6 @@
+LIBRARY EType
+EXPORTS
+    DllGetClassObject
+    DllCanUnloadNow
+    DllRegisterServer
+    DllUnregisterServer

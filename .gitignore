@@ -1,0 +1,14 @@
+tools/llvm-mingw*/
+tools/llvm-mingw.zip
+third_party/ecdict.csv
+build/
+data/dictionary.tsv
+__pycache__/
+*.download
+tools/reference-*
+third_party/ecdict.mini.csv
+drone-concept/
+.env
+.env.*
+*.pfx
+*.pem
