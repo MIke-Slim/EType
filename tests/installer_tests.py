@@ -14,11 +14,13 @@ import uuid
 import winreg
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / 'build/EType'
+PACKAGE = ROOT / 'build/standalone/EType'
 EXE = ROOT / 'build/installer-tests/EType-Setup-Validation.exe'
 KEY = r'Software\Microsoft\Windows\CurrentVersion\Uninstall\EType.InstallerValidation_is1'
-CLSID = r'Software\Classes\CLSID\{DC168F35-18EA-4EC5-B391-C4430C3F3ED9}'
-TIP = r'Software\Microsoft\CTF\TIP\{DC168F35-18EA-4EC5-B391-C4430C3F3ED9}'
+CLSID = r'Software\Classes\CLSID\{B61C1452-3E9A-4616-9EA3-18B4E5862CA4}'
+TIP = r'Software\Microsoft\CTF\TIP\{B61C1452-3E9A-4616-9EA3-18B4E5862CA4}'
+LEGACY_CLSID = r'Software\Classes\CLSID\{DC168F35-18EA-4EC5-B391-C4430C3F3ED9}'
+LEGACY_TIP = r'Software\Microsoft\CTF\TIP\{DC168F35-18EA-4EC5-B391-C4430C3F3ED9}'
 
 
 def registry_tree(hive, path, view):
@@ -40,7 +42,7 @@ def registry_tree(hive, path, view):
 def system_snapshot():
     return [registry_tree(hive, key, view)
             for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER)
-            for key in (CLSID, TIP)
+            for key in (CLSID, TIP, LEGACY_CLSID, LEGACY_TIP)
             for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY)]
 
 
@@ -54,7 +56,11 @@ def installed_path():
 
 
 def sha(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(4 * 1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def conflicts_with_registered_service(directory):
@@ -103,7 +109,7 @@ def main():
         log = run_root / f'operation-{counter}.log'
         result = subprocess.run([str(executable), '/VERYSILENT', '/SUPPRESSMSGBOXES',
                                  '/NORESTART', '/SP-', '/LANG=chinesesimp', f'/LOG={log}',
-                                 *arguments], timeout=60, capture_output=True)
+                                 *arguments], timeout=300, capture_output=True)
         return result.returncode
 
     def install(path):
@@ -172,6 +178,16 @@ def main():
             check('locked_uninstall_preserves_payload_and_installation_record',
                   sha(selected / 'x64/EType.dll') == original_dll_hash and
                   (selected / 'EType.exe').is_file() and installed_path() is not None)
+        finally:
+            kernel.CloseHandle(handle)
+        service = selected / 'runtime/ETypeService.exe'
+        handle = kernel.CreateFileW(str(service), 0x80000000, 1, None, 3, 0x80, None)
+        if handle == ctypes.c_void_p(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            check('reject_uninstall_while_local_service_is_locked', run(selected / 'unins000.exe') != 0)
+            check('service_lock_rejection_preserves_models_and_registration_record',
+                  (selected / 'models/Qwen3-4B-Q4_K_M.gguf').is_file() and installed_path() is not None)
         finally:
             kernel.CloseHandle(handle)
         marker = selected / 'etype-installation.id'

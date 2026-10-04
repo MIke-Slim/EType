@@ -8,6 +8,7 @@
 // The system input service itself has no dependency on this host.
 class EditorStore final:public ITextStoreACP {
     LONG refs_=1;DWORD lock_=0;ITextStoreACPSink* sink_=nullptr;HWND edit_;
+    TsActiveSelEnd activeEnd_=TS_AE_END;
     std::wstring text_;LONG start_=0,end_=0;bool updating_=false;
     void selection(){SendMessageW(edit_,EM_GETSEL,(WPARAM)&start_,(LPARAM)&end_);}
 public:
@@ -33,8 +34,8 @@ public:
     STDMETHODIMP RequestLock(DWORD flags,HRESULT* result)override{if(!sink_)return E_UNEXPECTED;if(lock_){*result=TS_E_SYNCHRONOUS;return S_OK;}lock_=flags;*result=sink_->OnLockGranted(flags);lock_=0;return S_OK;}
     STDMETHODIMP GetStatus(TS_STATUS* s)override{s->dwDynamicFlags=(GetWindowLongPtrW(edit_,GWL_STYLE)&ES_READONLY)?TS_SD_READONLY:0;s->dwStaticFlags=0;return S_OK;}
     STDMETHODIMP QueryInsert(LONG a,LONG b,ULONG,LONG* x,LONG* y)override{if(a<0||b<a||b>(LONG)text_.size())return TS_E_INVALIDPOS;*x=a;*y=b;return S_OK;}
-    STDMETHODIMP GetSelection(ULONG index,ULONG count,TS_SELECTION_ACP* p,ULONG* fetched)override{if(!lock_)return TS_E_NOLOCK;selection();*fetched=0;if(count&&(index==TS_DEFAULT_SELECTION||index==0)){p[0]={start_,end_,{TS_AE_END,FALSE}};*fetched=1;}return S_OK;}
-    STDMETHODIMP SetSelection(ULONG count,const TS_SELECTION_ACP* p)override{if(!lock_)return TS_E_NOLOCK;if(!count)return E_INVALIDARG;start_=p[0].acpStart;end_=p[0].acpEnd;updating_=true;SendMessageW(edit_,EM_SETSEL,start_,end_);updating_=false;return S_OK;}
+    STDMETHODIMP GetSelection(ULONG index,ULONG count,TS_SELECTION_ACP* p,ULONG* fetched)override{if(!lock_)return TS_E_NOLOCK;selection();*fetched=0;if(count&&(index==TS_DEFAULT_SELECTION||index==0)){p[0]={start_,end_,{activeEnd_,FALSE}};*fetched=1;}return S_OK;}
+    STDMETHODIMP SetSelection(ULONG count,const TS_SELECTION_ACP* p)override{if(!lock_)return TS_E_NOLOCK;if(!count)return E_INVALIDARG;start_=p[0].acpStart;end_=p[0].acpEnd;activeEnd_=p[0].style.ase;updating_=true;SendMessageW(edit_,EM_SETSEL,activeEnd_==TS_AE_START?end_:start_,activeEnd_==TS_AE_START?start_:end_);SendMessageW(edit_,EM_SCROLLCARET,0,0);updating_=false;return S_OK;}
     STDMETHODIMP GetText(LONG a,LONG b,WCHAR* text,ULONG capacity,ULONG* length,TS_RUNINFO* runs,ULONG runCapacity,ULONG* runCount,LONG* next)override{
         if(!lock_)return TS_E_NOLOCK;if(b==-1)b=(LONG)text_.size();if(a<0||b<a||b>(LONG)text_.size())return TS_E_INVALIDPOS;
         ULONG n=std::min(capacity,(ULONG)(b-a));if(text&&n)std::copy_n(text_.data()+a,n,text);*length=n;*runCount=0;if(runs&&runCapacity){runs[0]={(ULONG)(capacity?n:b-a),TS_RT_PLAIN};*runCount=1;}*next=a+(capacity?n:b-a);return S_OK;

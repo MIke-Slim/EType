@@ -32,9 +32,11 @@ class Store final:public ITextStoreACP {
     LONG refs_=1;DWORD lock_=0;ITextStoreACPSink* sink_=nullptr;
 public:
     std::wstring value;LONG start=0,end=0;bool readOnly=false,deferLocks=false;DWORD queuedLock=0;HWND window;
+    TsActiveSelEnd activeEnd=TS_AE_END;
     Store(){window=CreateWindowExW(0,L"STATIC",L"EType integration test",WS_OVERLAPPED,0,0,640,480,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);}
     ~Store(){drop(sink_);DestroyWindow(window);}
     void clear(){LONG old=(LONG)value.size();value.clear();start=end=0;if(sink_){TS_TEXTCHANGE c{0,old,0};sink_->OnTextChange(0,&c);sink_->OnSelectionChange();}}
+    void select(LONG a,LONG b,TsActiveSelEnd active=TS_AE_END){start=a;end=b;activeEnd=active;if(sink_)sink_->OnSelectionChange();}
     void flushLock(){deferLocks=false;if(queuedLock&&sink_){auto flags=queuedLock;queuedLock=0;lock_=flags;sink_->OnLockGranted(flags);lock_=0;}}
     STDMETHODIMP QueryInterface(REFIID id,void** p)override{if(!p)return E_POINTER;*p=nullptr;if(id==IID_IUnknown||id==IID_ITextStoreACP){*p=static_cast<ITextStoreACP*>(this);AddRef();return S_OK;}return E_NOINTERFACE;}
     STDMETHODIMP_(ULONG) AddRef()override{return InterlockedIncrement(&refs_);}
@@ -50,10 +52,10 @@ public:
     STDMETHODIMP GetStatus(TS_STATUS* s)override{s->dwDynamicFlags=readOnly?TS_SD_READONLY:0;s->dwStaticFlags=0;return S_OK;}
     STDMETHODIMP QueryInsert(LONG a,LONG b,ULONG,LONG* x,LONG* y)override{if(a<0||b<a||b>(LONG)value.size())return TS_E_INVALIDPOS;*x=a;*y=b;return S_OK;}
     STDMETHODIMP GetSelection(ULONG index,ULONG count,TS_SELECTION_ACP* p,ULONG* fetched)override{
-        if(!lock_)return TS_E_NOLOCK;*fetched=0;if(count&&(index==TS_DEFAULT_SELECTION||index==0)){p[0]={start,end,{TS_AE_END,FALSE}};*fetched=1;}return S_OK;
+        if(!lock_)return TS_E_NOLOCK;*fetched=0;if(count&&(index==TS_DEFAULT_SELECTION||index==0)){p[0]={start,end,{activeEnd,FALSE}};*fetched=1;}return S_OK;
     }
     STDMETHODIMP SetSelection(ULONG count,const TS_SELECTION_ACP* p)override{
-        if(!lock_)return TS_E_NOLOCK;if(!count)return E_INVALIDARG;start=p[0].acpStart;end=p[0].acpEnd;return S_OK;
+        if(!lock_)return TS_E_NOLOCK;if(!count)return E_INVALIDARG;start=p[0].acpStart;end=p[0].acpEnd;activeEnd=p[0].style.ase;return S_OK;
     }
     STDMETHODIMP GetText(LONG a,LONG b,WCHAR* text,ULONG capacity,ULONG* length,TS_RUNINFO* runs,ULONG runCapacity,ULONG* runCount,LONG* next)override{
         if(!lock_)return TS_E_NOLOCK;if(b==-1)b=(LONG)value.size();if(a<0||b<a||b>(LONG)value.size())return TS_E_INVALIDPOS;
@@ -88,17 +90,19 @@ public:
     STDMETHODIMP GetWnd(TsViewCookie,HWND* hwnd)override{*hwnd=window;return S_OK;}
 };
 static void pump(){MSG m;for(int i=0;i<10;++i){while(PeekMessageW(&m,nullptr,0,0,PM_REMOVE)){TranslateMessage(&m);DispatchMessageW(&m);}Sleep(1);}}
-static bool key(ITfKeyEventSink* sink,ITfContext* context,UINT vk,bool shift=false){
-    BYTE state[256]{};if(shift)state[VK_SHIFT]=0x80;SetKeyboardState(state);
+static bool key(ITfKeyEventSink* sink,ITfContext* context,UINT vk,bool shift=false,bool control=false){
+    // A TSF call can pump native messages. Refresh each test key's modifiers at
+    // every sink call, then restore the user's state before pumping the queue.
+    BYTE previous[256]{};GetKeyboardState(previous);BYTE state[256]{};if(shift)state[VK_SHIFT]=0x80;if(control)state[VK_CONTROL]=0x80;SetKeyboardState(state);
     LPARAM param=(LPARAM)MapVirtualKeyW(vk,MAPVK_VK_TO_VSC)<<16;BOOL eaten=FALSE;
     auto hr=sink->OnTestKeyDown(context,vk,param,&eaten);
-    if(SUCCEEDED(hr)&&eaten)hr=sink->OnKeyDown(context,vk,param,&eaten);
-    if(vk==VK_SHIFT){sink->OnTestKeyUp(context,vk,param,&eaten);if(eaten)sink->OnKeyUp(context,vk,param,&eaten);}
-    pump();ZeroMemory(state,sizeof(state));SetKeyboardState(state);return SUCCEEDED(hr)&&eaten;
+    if(SUCCEEDED(hr)&&eaten){SetKeyboardState(state);hr=sink->OnKeyDown(context,vk,param,&eaten);}
+    if(vk==VK_SHIFT){SetKeyboardState(state);sink->OnTestKeyUp(context,vk,param,&eaten);if(eaten){SetKeyboardState(state);sink->OnKeyUp(context,vk,param,&eaten);}}
+    SetKeyboardState(previous);pump();return SUCCEEDED(hr)&&eaten;
 }
 static void word(ITfKeyEventSink* sink,ITfContext* c,const char* text){for(;*text;++text)check(key(sink,c,(UINT)toupper(*text)),"letter handled via TSF sink");}
 int wmain(int argc,wchar_t** argv){
-    if(argc!=2)return 2;SetEnvironmentVariableW(L"ETYPE_HEADLESS_TEST",L"1");CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
+    if(argc!=2&&argc!=3)return 2;bool live=argc==3&&wcscmp(argv[2],L"--local-ai")==0;SetEnvironmentVariableW(L"ETYPE_HEADLESS_TEST",L"1");CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     auto settingsPath=(std::filesystem::absolute(argv[1]).parent_path().parent_path().parent_path()/(L"tsf-test-settings-"+std::to_wstring(GetCurrentProcessId())+L".ini")).wstring();
     SetEnvironmentVariableW(L"ETYPE_TEST_SETTINGS",settingsPath.c_str());
     WritePrivateProfileStringW(L"EType",L"ChinesePunctuation",L"1",settingsPath.c_str());
@@ -123,6 +127,7 @@ int wmain(int argc,wchar_t** argv){
     check(capture->active!=nullptr,"Windows creates actual input-service instance");
     if(!capture->active){std::cout<<"tsf_checks="<<checks<<" failures="<<failures<<"\n";return 2;}
     ITfTextInputProcessor* service=capture->active;service->AddRef();ITfKeyEventSink* sink=nullptr;service->QueryInterface(IID_ITfKeyEventSink,(void**)&sink);
+    check(!key(sink,context,VK_RETURN,false,true),"word mode Ctrl Enter is left to the host");
     word(sink,context,"bank");check(store->value==L"bank","English composition appears in host text store");check(key(sink,context,'2'),"candidate key handled");check(store->value==L"河岸","selected Chinese replaces English in host");
     store->clear();word(sink,context,"apple");key(sink,context,VK_SPACE);check(store->value==L"苹果","space commits Chinese through TSF");
     store->clear();word(sink,context,"aple");key(sink,context,VK_SPACE);check(store->value==L"aple","correction prompt preserves composition");
@@ -150,6 +155,31 @@ int wmain(int argc,wchar_t** argv){
     check(secondStore->value==L"bank","old async callback leaves new composition untouched");
     key(sink,secondContext,VK_SPACE);check(secondStore->value==L"银行","old async callback leaves new engine buffer untouched");
     sink->OnSetFocus(FALSE);mgr->SetFocus(document);secondDocument->Pop(TF_POPF_ALL);drop(secondContext);drop(secondDocument);secondStore->Release();
+    store->clear();check(key(sink,context,VK_SPACE,true,true),"Ctrl Shift Space selects sentence mode");
+    word(sink,context,"i");key(sink,context,VK_SPACE);word(sink,context,"have");key(sink,context,VK_SPACE);key(sink,context,'2');key(sink,context,VK_OEM_PERIOD);
+    check(store->value==L"i have 2.","sentence spaces numbers and punctuation remain in composition");check(key(sink,context,VK_RETURN,false,true),"sentence Ctrl Enter is consumed");check(store->value==L"i have 2.","sentence Ctrl Enter preserves original English");
+    store->clear();key(sink,context,'2');key(sink,context,VK_SPACE);word(sink,context,"apples");check(store->value==L"2 apples","sentence can start with a number");key(sink,context,VK_ESCAPE);check(store->value.empty(),"sentence Escape cancels composition");
+    auto typeText=[&](const char* text){for(;*text;++text){SHORT mapped=VkKeyScanA(*text);check(key(sink,context,LOBYTE(mapped),(HIBYTE(mapped)&1)!=0),"sentence character handled");}};
+    typeText("i have red books.");key(sink,context,VK_HOME);key(sink,context,VK_RIGHT,false,true);key(sink,context,VK_RIGHT,false,true);
+    check(store->start==7&&store->end==7,"real TSF caret moves by word inside composition");
+    key(sink,context,VK_RIGHT,true,true);check(store->start==7&&store->end==11,"real TSF Shift selection retains anchor");typeText("blue ");
+    check(store->value==L"i have blue books."&&store->start==12&&store->end==12,"middle word replacement updates real TSF host");
+    key(sink,context,VK_BACK,false,true);check(store->value==L"i have books."&&store->start==7,"Ctrl Backspace removes preceding word");
+    key(sink,context,VK_DELETE);check(store->value==L"i have ooks."&&store->start==7,"Delete at middle keeps caret position");
+    key(sink,context,VK_END);key(sink,context,VK_LEFT,true);key(sink,context,VK_LEFT,true);check(store->end-store->start==2&&store->activeEnd==TS_AE_START,"repeated Shift Left extends in reverse direction");
+    key(sink,context,VK_ESCAPE);store->clear();typeText("i have red books.");store->select(7,10);typeText("green");check(store->value==L"i have green books.","host mouse selection reconciled before typing");key(sink,context,VK_RETURN,false,true);
+    store->clear();typeText("prefix ");key(sink,context,VK_RETURN,false,true);typeText("draft");store->select(0,0);key(sink,context,'N');check(store->value==L"nprefix draft","mouse outside composition preserves draft and starts at new host caret");key(sink,context,VK_ESCAPE);store->clear();
+    if(live){
+        auto sentence=[&](){for(const char* text="i sat on the bank.";*text;++text){SHORT mapped=VkKeyScanA(*text);key(sink,context,LOBYTE(mapped),(HIBYTE(mapped)&1)!=0);}};
+        auto wait=[](){auto until=GetTickCount64()+15000;while(GetTickCount64()<until)pump();};
+        sentence();check(key(sink,context,VK_RETURN),"Enter starts local translation");check(key(sink,context,VK_RETURN)&&store->value==L"i sat on the bank.","repeated Enter while pending preserves composition");wait();check(key(sink,context,VK_RETURN),"Enter confirms translated Chinese");
+        check(store->value.find(L"河岸")!=std::wstring::npos&&store->value.find(L"bank")==std::wstring::npos,"local Chinese candidate commits through real TSF");
+        store->clear();sentence();key(sink,context,VK_RETURN);wait();key(sink,context,VK_RETURN,false,true);check(store->value==L"i sat on the bank.","Ctrl Enter outputs English when Chinese is available");
+        store->clear();sentence();key(sink,context,VK_RETURN);key(sink,context,VK_RETURN,false,true);wait();check(store->value==L"i sat on the bank.","Ctrl Enter during translation rejects late Chinese");
+        store->clear();sentence();key(sink,context,VK_RETURN);key(sink,context,'S');wait();check(store->value==L"i sat on the bank.s","editing pending sentence keeps edited English");key(sink,context,VK_RETURN,false,true);
+        store->clear();sentence();key(sink,context,VK_RETURN);sink->OnSetFocus(FALSE);pump();store->clear();word(sink,context,"new");wait();check(store->value==L"new","late translation cannot affect refocused composition");key(sink,context,VK_ESCAPE);
+    }
+    key(sink,context,VK_SPACE,true,true);store->clear();word(sink,context,"bank");key(sink,context,'2');check(store->value==L"河岸","returning to word mode restores original candidate behavior");
     profiles->DeactivateProfile(TF_PROFILETYPE_INPUTPROCESSOR,ETypeLanguage,ETypeClsid,ETypeProfile,nullptr,0x10000000);drop(profiles);
     drop(sink);drop(service);mgr->SetFocus(nullptr);document->Pop(TF_POPF_ALL);drop(context);drop(document);store->Release();mgr->Deactivate();drop(mgr);pump();
     CoRevokeClassObject(registrationCookie);capture->Release();

@@ -74,29 +74,90 @@ std::vector<std::string> Dictionary::correct(const std::string& value) const {
     for(size_t i=0;i<std::min<size_t>(5,hits.size());++i)r.push_back(hits[i].word);
     return r;
 }
-const Entry* Engine::entry() const { return dictionary->find(buffer); }
-size_t Engine::count() const { if(correcting)return corrections.size(); auto e=entry(); return e?e->candidates.size():0; }
-void Engine::reset() { buffer.clear(); corrections.clear(); correcting=false; selected=0; }
+const Entry* Engine::entry() const { return sentenceMode ? nullptr : dictionary->find(buffer); }
+size_t Engine::count() const { if(sentenceMode)return sentences.size(); if(correcting)return corrections.size(); auto e=entry(); return e?e->candidates.size():0; }
+void Engine::invalidate() { ++revision; sentences.clear(); sentenceStatus.clear(); translating=false; corrections.clear(); correcting=false; selected=0; }
+void Engine::reset() { buffer.clear(); caret=selectionAnchor=0; invalidate(); }
+void Engine::setSelection(size_t active,size_t anchor) {
+    active=std::min(active,buffer.size());anchor=std::min(anchor,buffer.size());
+    if((caret!=active||selectionAnchor!=anchor)&&!sentences.empty()){++revision;sentences.clear();sentenceStatus=L"编辑原句 · Enter 重新翻译";selected=0;}
+    caret=active;selectionAnchor=anchor;
+}
+static bool wordCharacter(unsigned char c){return std::isalnum(c)||c=='\''||c=='_';}
+size_t Engine::wordLeft() const {
+    size_t at=std::min(caret,buffer.size());
+    while(at&&!wordCharacter((unsigned char)buffer[at-1]))--at;
+    while(at&&wordCharacter((unsigned char)buffer[at-1]))--at;
+    return at;
+}
+size_t Engine::wordRight() const {
+    size_t at=std::min(caret,buffer.size());
+    while(at<buffer.size()&&wordCharacter((unsigned char)buffer[at]))++at;
+    while(at<buffer.size()&&!wordCharacter((unsigned char)buffer[at]))++at;
+    return at;
+}
+void Engine::eraseSelection() {
+    auto start=std::min(caret,selectionAnchor),end=std::max(caret,selectionAnchor);
+    buffer.erase(start,end-start);caret=selectionAnchor=start;
+}
+uint64_t Engine::beginTranslation() {
+    invalidate(); translating=true; sentenceStatus=L"正在翻译… · 可继续编辑"; return revision;
+}
+bool Engine::completeTranslation(uint64_t token,const std::string& original,std::vector<Candidate> values,std::wstring error) {
+    if(!sentenceMode || !translating || revision!=token || buffer!=original)return false;
+    translating=false; selected=0; sentences=std::move(values);
+    sentenceStatus=sentences.empty()?(error.empty()?L"未获得可靠译文，英文已保留 · Enter 重试":error):L"选择中文表达 · Enter / 空格确认";
+    return true;
+}
 Result Engine::type(char c) {
     if(english)return {wide(std::string(1,c)),false,false};
-    buffer.push_back(c); correcting=false; corrections.clear(); selected=0; return {};
+    if(sentenceMode){
+        setSelection(caret,selectionAnchor);
+        if(buffer.size()-(std::max(caret,selectionAnchor)-std::min(caret,selectionAnchor))>=500){sentenceStatus=L"最多输入 500 个英文字符";return {};}
+        eraseSelection();buffer.insert(buffer.begin()+caret,c);++caret;selectionAnchor=caret;
+    }else {buffer.push_back(c);caret=selectionAnchor=buffer.size();}
+    invalidate(); return {};
 }
 Result Engine::finish() { Result r{wide(buffer)}; reset(); return r; }
 Result Engine::choose(size_t index) {
     size_t at=pageStart()+index; if(at>=count())return {};
-    if(correcting) { auto fixed=corrections[at]; buffer=fixed; correcting=false; corrections.clear(); selected=0; return {}; }
+    if(sentenceMode){Result r{sentences[at].text};reset();return r;}
+    if(correcting) { auto fixed=corrections[at]; buffer=fixed; caret=selectionAnchor=buffer.size();correcting=false; corrections.clear(); selected=0; return {}; }
     auto e=entry(); if(!e)return {};
     Result r{e->candidates[at].text}; reset(); return r;
 }
-Result Engine::key(Key k) {
+Result Engine::key(Key k,bool extendSelection,bool byWord) {
     if(k==Key::Toggle) { auto r=finish(); english=!english; return r; }
     if(buffer.empty())return {{},false,false};
+    if(sentenceMode){
+        setSelection(caret,selectionAnchor);
+        if(k==Key::Left||k==Key::Right||k==Key::Home||k==Key::End){
+            size_t next=caret;
+            if(k==Key::Home)next=0;
+            else if(k==Key::End)next=buffer.size();
+            else if(hasSelection()&&!extendSelection&&!byWord)next=k==Key::Left?std::min(caret,selectionAnchor):std::max(caret,selectionAnchor);
+            else if(k==Key::Left)next=byWord?wordLeft():(caret?caret-1:0);
+            else next=byWord?wordRight():std::min(caret+1,buffer.size());
+            setSelection(next,extendSelection?selectionAnchor:next);return {};
+        }
+        if(k==Key::Backspace||k==Key::Delete){
+            if(!hasSelection()){
+                if(k==Key::Backspace)setSelection(byWord?wordLeft():(caret?caret-1:0),caret);
+                else setSelection(byWord?wordRight():std::min(caret+1,buffer.size()),caret);
+            }
+            if(hasSelection()){eraseSelection();invalidate();}return {};
+        }
+    }
     switch(k) {
-    case Key::Enter: return finish();
+    case Key::Enter:
+        if(sentenceMode)return count()?choose(selected-pageStart()):Result{};
+        return finish();
+    case Key::CommitEnglish: return finish();
     case Key::Escape: reset(); return {};
-    case Key::Backspace: buffer.pop_back(); correcting=false; corrections.clear(); selected=0; return {};
+    case Key::Backspace: buffer.pop_back(); caret=selectionAnchor=buffer.size();invalidate(); return {};
     case Key::Space:
         if(count())return choose(selected-pageStart());
+        if(sentenceMode)return type(' ');
         correcting=true; corrections=dictionary->correct(buffer); selected=0; return {};
     case Key::Up: if(count())selected=(selected+count()-1)%count(); return {};
     case Key::Down: if(count())selected=(selected+1)%count(); return {};
@@ -106,6 +167,7 @@ Result Engine::key(Key k) {
     }
 }
 Result Engine::punctuation(wchar_t c) {
+    if(sentenceMode&&!english&&c>=32&&c<=126)return type((char)c);
     Result r;
     // Punctuation never silently accepts a spelling correction.
     auto e=entry();

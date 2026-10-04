@@ -1,0 +1,47 @@
+[
+  {
+    "group": "speech",
+    "file": "models/kokoro-v1.0.int8.onnx",
+    "source": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx",
+    "size": 92361271,
+    "sha256": "6e742170d309016e5891a994e1ce1559c702a2ccd0075e67ef7157974f6406cb",
+    "publisher_sha256": null,
+    "hash_provenance": "observed_on_first_download"
+  },
+  {
+    "group": "speech",
+    "file": "models/voices-v1.0.bin",
+    "source": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+    "size": 28214398,
+    "sha256": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d",
+    "publisher_sha256": null,
+    "hash_provenance": "observed_on_first_download"
+  },
+  {
+    "group": "translation",
+    "file": "models/Qwen3-4B-Q4_K_M.gguf",
+    "source": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q4_K_M.gguf",
+    "size": 2497280256,
+    "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+    "publisher_sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+    "hash_provenance": "publisher"
+  },
+  {
+    "group": "translation",
+    "file": "llama-b11146-bin-win-cuda-12.4-x64.zip",
+    "source": "https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-win-cuda-12.4-x64.zip",
+    "size": 253869799,
+    "sha256": "3c806a6ceccc3dae1c743ceb1a1fb2cce5b76f40bfbd4c6b7b8afb6ef45a5807",
+    "publisher_sha256": null,
+    "hash_provenance": "observed_on_first_download"
+  },
+  {
+    "group": "translation",
+    "file": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+    "source": "https://github.com/ggml-org/llama.cpp/releases/download/b11146/cudart-llama-bin-win-cuda-12.4-x64.zip",
+    "size": 391443627,
+    "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
+    "publisher_sha256": null,
+    "hash_provenance": "observed_on_first_download"
+  }
+]

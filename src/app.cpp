@@ -13,12 +13,14 @@
 #include "platform.h"
 #include "identity.h"
 #include "editor_store.h"
+#include "local_ai.h"
 
 using namespace etype;
 static HINSTANCE instance;
 static std::wstring root;
 static std::shared_ptr<const Dictionary> dictionary;
 static HWND mainWindow,edit,fontCombo,accentCombo,volumeBar,punctuationCombo,statusLabel;
+static HWND modeCombo,voiceCombo,speedCombo;
 static HFONT bodyFont,titleFont;
 static HMODULE trialModule=nullptr;
 static ITfThreadMgr* trialThread=nullptr;
@@ -27,8 +29,13 @@ static ITfDocumentMgr* trialDocument=nullptr;
 static ITfContext* trialContext=nullptr;
 static EditorStore* trialStore=nullptr;
 static bool componentSelfTest=false;
+static bool sentenceSelfTest=false;
 static unsigned testActivationNotifications=0,testEditFocusNotifications=0;
 static int scale=100;
+static int settingsScroll=0;
+static std::string lastEnglish;
+static DWORD lastSpeechPid=0;
+static SpeechState lastSpeechState=SpeechState::Idle;
 static int px(int n){return MulDiv(n,scale,100);}
 static std::vector<std::pair<std::wstring,std::wstring>> voices(){
     std::vector<std::pair<std::wstring,std::wstring>> result;
@@ -42,11 +49,12 @@ static std::vector<std::pair<std::wstring,std::wstring>> voices(){
     }
     enumeration->Release();return result;
 }
-static bool speak(const std::wstring& word,bool british,bool silent=false,const std::wstring& output=L"",int volume=-1){
+static bool speak(const std::wstring& word,bool british,bool silent=false,const std::wstring& output=L"",int volume=-1,HANDLE cancel=nullptr){
     ISpVoice* voice=nullptr;
     HRESULT hr=CoCreateInstance(CLSID_SpVoice,nullptr,CLSCTX_ALL,IID_ISpVoice,(void**)&voice);
     if(FAILED(hr))return false;
     auto settings=readSettings();voice->SetVolume((USHORT)(volume>=0?std::clamp(volume,0,100):settings.volume));
+    voice->SetRate(settings.slowSpeech?-2:0);
     IEnumSpObjectTokens* enumeration=nullptr;ISpObjectToken* chosen=nullptr;
     const wchar_t* filter=british?L"Language=809":L"Language=409";
     if(SUCCEEDED(SpEnumTokens(SPCAT_VOICES,filter,nullptr,&enumeration))){enumeration->Next(1,&chosen,nullptr);enumeration->Release();}
@@ -59,7 +67,8 @@ static bool speak(const std::wstring& word,bool british,bool silent=false,const 
         if(SUCCEEDED(hr))hr=stream->BindToFile(output.c_str(),SPFM_CREATE_ALWAYS,&SPDFID_WaveFormatEx,&format,0);
         if(SUCCEEDED(hr))hr=voice->SetOutput(stream,TRUE);
     }
-    if(SUCCEEDED(hr))hr=voice->Speak(word.c_str(),SPF_IS_NOT_XML,nullptr);
+    if(SUCCEEDED(hr))hr=voice->Speak(word.c_str(),SPF_IS_NOT_XML|(cancel?SPF_ASYNC:0),nullptr);
+    if(SUCCEEDED(hr)&&cancel){while(voice->WaitUntilDone(30)==S_FALSE){if(WaitForSingleObject(cancel,0)==WAIT_OBJECT_0){voice->Speak(L"",SPF_PURGEBEFORESPEAK,nullptr);hr=E_ABORT;break;}}}
     if(stream){stream->Close();stream->Release();}voice->Release();return SUCCEEDED(hr);
 }
 static HRESULT activate(){
@@ -68,7 +77,7 @@ static HRESULT activate(){
         if(layout)ActivateKeyboardLayout(layout,0);
     }
     ITfInputProcessorProfileMgr* mgr=nullptr;HRESULT hr=CoCreateInstance(CLSID_TF_InputProcessorProfiles,nullptr,CLSCTX_INPROC_SERVER,IID_ITfInputProcessorProfileMgr,(void**)&mgr);
-    if(SUCCEEDED(hr)){hr=mgr->ActivateProfile(TF_PROFILETYPE_INPUTPROCESSOR,ETypeLanguage,ETypeClsid,ETypeProfile,nullptr,trialThread?0x10000000:0x10000001);mgr->Release();}return hr;
+    if(SUCCEEDED(hr)){auto flags=trialThread?ETypeProfileForProcess:(ETypeEnableProfile|ETypeProfileForProcess|ETypeProfileForSession);hr=mgr->ActivateProfile(TF_PROFILETYPE_INPUTPROCESSOR,ETypeLanguage,ETypeClsid,ETypeProfile,nullptr,flags);mgr->Release();}return hr;
 }
 static void endTrial();
 static HRESULT focusTrial(bool focused){
@@ -81,7 +90,14 @@ static HRESULT focusTrial(bool focused){
 static HRESULT startTrial(){
     if(trialSink){trialThread->SetFocus(trialDocument);return S_OK;}
     HRESULT hr=CoCreateInstance(CLSID_TF_ThreadMgr,nullptr,CLSCTX_INPROC_SERVER,IID_ITfThreadMgr,(void**)&trialThread);
-    TfClientId id=0;if(SUCCEEDED(hr))hr=trialThread->Activate(&id);
+    TfClientId id=0;
+    if(SUCCEEDED(hr)&&componentSelfTest){
+        // Only the explicitly loaded preview service belongs to this test.
+        // Do not activate the desktop's installed TIP in the same text store.
+        ITfThreadMgrEx* isolated=nullptr;
+        hr=trialThread->QueryInterface(IID_ITfThreadMgrEx,(void**)&isolated);
+        if(SUCCEEDED(hr)){hr=isolated->ActivateEx(&id,TF_TMAE_NOACTIVATETIP|TF_TMAE_NOACTIVATEKEYBOARDLAYOUT);isolated->Release();}
+    }else if(SUCCEEDED(hr))hr=trialThread->Activate(&id);
     auto dll=root+L"\\x64\\EType.dll";
     if(SUCCEEDED(hr))trialModule=LoadLibraryExW(dll.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
     if(SUCCEEDED(hr)&&!trialModule)hr=HRESULT_FROM_WIN32(GetLastError());
@@ -127,10 +143,21 @@ static HWND control(const wchar_t* cls,const wchar_t* text,DWORD style,int id,in
 static void label(const wchar_t* value,int x,int y,int w,int h,int id=0){control(L"STATIC",value,SS_LEFT,id,x,y,w,h);}
 static void comboItem(HWND combo,const wchar_t* item){SendMessageW(combo,CB_ADDSTRING,0,(LPARAM)item);}
 static void refreshVoices(){
-    auto available=voices();bool us=false,gb=false;
-    for(auto& pair:available){if(pair.second.find(L"409")!=std::wstring::npos)us=true;if(pair.second.find(L"809")!=std::wstring::npos)gb=true;}
-    std::wstring description=L"离线语音：美式 "+std::wstring(us?L"可用":L"未安装")+L"  ·  英式 "+(gb?L"可用":L"未安装");
+    auto available=voices();bool gb=false;
+    for(auto& pair:available)if(pair.second.find(L"809")!=std::wstring::npos)gb=true;
+    std::wstring description=L"美式：本地 Kokoro 自然语音 · 英式 Windows 音源："+std::wstring(gb?L"可用":L"未安装");
     SetWindowTextW(statusLabel,description.c_str());
+}
+static LRESULT CALLBACK isolatedEdit(HWND h,UINT message,WPARAM w,LPARAM l,UINT_PTR,DWORD_PTR){
+    // Test keys go straight to the preview sink. Native keyboard, clipboard and
+    // IMM input must not insert the user's concurrent desktop composition.
+    switch(message){
+    case WM_CHAR:case WM_UNICHAR:case WM_KEYDOWN:case WM_KEYUP:
+    case WM_SYSCHAR:case WM_SYSKEYDOWN:case WM_SYSKEYUP:case WM_PASTE:
+    case WM_IME_STARTCOMPOSITION:case WM_IME_COMPOSITION:case WM_IME_ENDCOMPOSITION:
+    case WM_IME_CHAR:return 0;
+    }
+    return DefSubclassProc(h,message,w,l);
 }
 static void createControls(){
     bodyFont=CreateFontW(-px(15),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Microsoft YaHei UI");
@@ -138,8 +165,8 @@ static void createControls(){
     auto logo=control(L"STATIC",L"",SS_ICON|SS_REALSIZEIMAGE,0,34,18,64,64);
     auto icon=(HICON)LoadImageW(instance,MAKEINTRESOURCEW(1),IMAGE_ICON,px(64),px(64),LR_SHARED);
     SendMessageW(logo,STM_SETICON,(WPARAM)icon,0);
-    auto title=control(L"STATIC",L"EType · 英文词汇输入法",SS_LEFT,0,110,27,640,44);SendMessageW(title,WM_SETFONT,(WPARAM)titleFont,TRUE);
-    label(L"把每一次中文输入，变成一次英文单词练习。",35,79,750,28);
+    auto title=control(L"STATIC",L"EType · 英文学习输入法",SS_LEFT,0,110,27,640,44);SendMessageW(title,WM_SETFONT,(WPARAM)titleFont,TRUE);
+    label(L"练习英文单词与句子，选择中文表达。",35,79,750,28);
     std::wstring count=L"离线词库  "+std::to_wstring(dictionary->size())+L" 个词条   ·   完整拼写   ·   固定候选顺序";
     label(count.c_str(),35,119,750,28);
     control(L"BUTTON",L"安装系统输入法",BS_PUSHBUTTON,101,35,166,178,38);
@@ -148,27 +175,40 @@ static void createControls(){
     control(L"BUTTON",L"卸载输入法",BS_PUSHBUTTON,104,593,166,143,38);
     label(L"先点击“直接试用”，再在下方输入英文单词；其他软件使用需安装。",35,227,750,27);
     edit=control(L"EDIT",L"",WS_TABSTOP|WS_BORDER|ES_MULTILINE|ES_AUTOVSCROLL|ES_WANTRETURN|WS_VSCROLL,201,35,263,701,139);
-    label(L"试试 bank、apple、went；空格选中文，回车留英文，Shift 切换模式。",35,414,750,27);
+    if(componentSelfTest)SetWindowSubclass(edit,isolatedEdit,1,0);
+    label(L"Ctrl+Shift+空格：单词/句子；句子 Enter 翻译/选中文，Ctrl+Enter 英文。",35,414,750,27);
     label(L"候选字号",35,465,110,28);
     fontCombo=control(L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST|WS_VSCROLL,301,145,461,108,210);
     for(int i=12;i<=28;++i)comboItem(fontCombo,std::to_wstring(i).c_str());
     label(L"发音口音",287,465,90,28);
     accentCombo=control(L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST,302,384,461,151,120);
     comboItem(accentCombo,L"美式英语（默认）");comboItem(accentCombo,L"英式英语");
-    control(L"BUTTON",L"试听 apple",BS_PUSHBUTTON,303,560,459,176,34);
+    control(L"BUTTON",L"播放英文 / 重播",BS_PUSHBUTTON,303,560,459,176,34);
     label(L"发音音量",35,513,110,28);
     volumeBar=control(TRACKBAR_CLASSW,L"",WS_TABSTOP|TBS_HORZ,304,140,507,390,37);SendMessageW(volumeBar,TBM_SETRANGE,TRUE,MAKELPARAM(0,100));
     label(L"默认标点",35,559,110,28);
     punctuationCombo=control(L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST,305,145,555,174,130);
     comboItem(punctuationCombo,L"中文标点 ，。？！");comboItem(punctuationCombo,L"英文标点 ,.!?");
     control(L"BUTTON",L"保存设置",BS_PUSHBUTTON,306,560,553,176,35);
-    statusLabel=control(L"STATIC",L"",SS_LEFT,307,35,603,700,30);
-    label(L"词库 v1.0.1 · 部分词库音标为英式，播放口音以设置为准。",35,640,730,26);
+    label(L"输入模式",35,613,110,28);
+    modeCombo=control(L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST,312,145,609,174,130);
+    comboItem(modeCombo,L"单词模式");comboItem(modeCombo,L"句子模式");
+    label(L"美式音色",355,613,100,28);
+    voiceCombo=control(L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST,313,465,609,271,130);
+    comboItem(voiceCombo,L"Heart · 自然女声");comboItem(voiceCombo,L"Michael · 自然男声");
+    label(L"播放速度",35,665,110,28);
+    speedCombo=control(L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST,314,145,661,174,130);
+    comboItem(speedCombo,L"正常 1.0×");comboItem(speedCombo,L"慢速 0.8×");
+    control(L"BUTTON",L"停止播放",BS_PUSHBUTTON,315,560,659,176,34);
+    statusLabel=control(L"STATIC",L"",SS_LEFT,307,35,715,700,30);
+    label(L"美式使用本地 Kokoro；英式沿用 Windows 音源。句子最长 500 字符。",35,756,730,26);
     auto settings=readSettings();SendMessageW(fontCombo,CB_SETCURSEL,settings.fontSize-12,0);
     SendMessageW(accentCombo,CB_SETCURSEL,settings.british?1:0,0);SendMessageW(punctuationCombo,CB_SETCURSEL,settings.chinesePunctuation?0:1,0);SendMessageW(volumeBar,TBM_SETPOS,TRUE,settings.volume);
+    SendMessageW(modeCombo,CB_SETCURSEL,settings.sentenceMode?1:0,0);SendMessageW(voiceCombo,CB_SETCURSEL,settings.maleVoice?1:0,0);SendMessageW(speedCombo,CB_SETCURSEL,settings.slowSpeech?1:0,0);
+    SetTimer(mainWindow,2,300,nullptr);
     refreshVoices();
 }
-static Settings currentSettings(){Settings s;s.fontSize=(int)SendMessageW(fontCombo,CB_GETCURSEL,0,0)+12;s.british=SendMessageW(accentCombo,CB_GETCURSEL,0,0)==1;s.chinesePunctuation=SendMessageW(punctuationCombo,CB_GETCURSEL,0,0)==0;s.volume=(int)SendMessageW(volumeBar,TBM_GETPOS,0,0);return s;}
+static Settings currentSettings(){Settings s;s.fontSize=(int)SendMessageW(fontCombo,CB_GETCURSEL,0,0)+12;s.british=SendMessageW(accentCombo,CB_GETCURSEL,0,0)==1;s.chinesePunctuation=SendMessageW(punctuationCombo,CB_GETCURSEL,0,0)==0;s.volume=(int)SendMessageW(volumeBar,TBM_GETPOS,0,0);s.sentenceMode=SendMessageW(modeCombo,CB_GETCURSEL,0,0)==1;s.maleVoice=SendMessageW(voiceCombo,CB_GETCURSEL,0,0)==1;s.slowSpeech=SendMessageW(speedCombo,CB_GETCURSEL,0,0)==1;return s;}
 static void setup(bool uninstall){
     auto uninstaller=root+L"\\unins000.exe";
     if(uninstall&&std::filesystem::exists(uninstaller)){
@@ -190,6 +230,9 @@ static LRESULT CALLBACK proc(HWND h,UINT m,WPARAM w,LPARAM l){
     case WM_COMMAND:switch(LOWORD(w)){
         case 201:
             if(trialStore&&HIWORD(w)==EN_CHANGE)trialStore->sync();
+            if(HIWORD(w)==EN_CHANGE){int n=GetWindowTextLengthW(edit);std::wstring value(n+1,L'\0');GetWindowTextW(edit,value.data(),n+1);value.resize(n);auto text=utf8(value);
+                for(auto& c:text)if(c=='\r'||c=='\n'||c=='\t')c=' ';
+                if(!text.empty()&&text.size()<=500&&std::all_of(text.begin(),text.end(),[](unsigned char c){return c>=32&&c<=126;}))lastEnglish=text;}
             if(componentSelfTest&&(HIWORD(w)==EN_KILLFOCUS||HIWORD(w)==EN_SETFOCUS))++testEditFocusNotifications;
             if(!componentSelfTest&&HIWORD(w)==EN_KILLFOCUS)focusTrial(false);
             if(!componentSelfTest&&HIWORD(w)==EN_SETFOCUS)focusTrial(true);
@@ -198,9 +241,24 @@ static LRESULT CALLBACK proc(HWND h,UINT m,WPARAM w,LPARAM l){
         case 102:{auto hr=startTrial();if(hr!=S_OK){std::wstring text=L"未能启用本窗口试用。你仍可尝试安装系统输入法。\n错误码：";wchar_t hex[24];swprintf(hex,24,L"0x%08lX",(unsigned long)hr);text+=hex;MessageBoxW(h,text.c_str(),L"EType",MB_OK|MB_ICONINFORMATION);}else{SetFocus(edit);SetWindowTextW(statusLabel,L"本窗口已启用 EType。输入 bank 测试；在其他软件使用需要安装系统输入法。");}break;}
         case 103:{auto path=root+L"\\使用说明.txt";ShellExecuteW(h,L"open",path.c_str(),nullptr,root.c_str(),SW_SHOWNORMAL);break;}
         case 104:setup(true);break;
-        case 303:{auto s=currentSettings();speak(L"apple",s.british,false,L"",s.volume);break;}
+        case 303:{auto s=currentSettings();s.sentenceMode=readSettings().sentenceMode;writeSettings(s);int n=GetWindowTextLengthW(edit);std::wstring value(n+1,L'\0');GetWindowTextW(edit,value.data(),n+1);value.resize(n);
+            LONG a=0,b=0;SendMessageW(edit,EM_GETSEL,(WPARAM)&a,(LPARAM)&b);if(b>a)value=value.substr((size_t)a,(size_t)(b-a));
+            auto text=utf8(value);for(auto& c:text)if(c=='\r'||c=='\n'||c=='\t')c=' ';
+            if(text.size()>500){SetWindowTextW(statusLabel,L"本次语音最多 500 字符，请选中较短的英文后播放。");break;}
+            if(text.empty()||std::any_of(text.begin(),text.end(),[](unsigned char c){return c<32||c>126;}))text=lastEnglish.empty()?"apple":lastEnglish;
+            launchSpeech(root,text);SetWindowTextW(statusLabel,L"正在准备英文发音；首次使用可能需要加载模型。停止按钮可取消播放。");break;}
+        case 315:stopSpeech();SetWindowTextW(statusLabel,speechStatusText(speechSnapshot().state).c_str());break;
+        case 312:if(HIWORD(w)==CBN_SELCHANGE)writeSettings(currentSettings());break;
         case 306:if(writeSettings(currentSettings())){SetWindowTextW(statusLabel,L"设置已保存，下次显示候选窗口时生效。");}else MessageBoxW(h,L"设置保存失败，请检查本地用户目录的写入权限。",L"EType",MB_OK|MB_ICONERROR);break;
     }return 0;
+    case WM_TIMER:if(w==2){SendMessageW(modeCombo,CB_SETCURSEL,readSettings().sentenceMode?1:0,0);auto speech=speechSnapshot();
+        if(speech.pid!=lastSpeechPid||speech.state!=lastSpeechState){lastSpeechPid=speech.pid;lastSpeechState=speech.state;auto status=speechStatusText(speech.state);if(!status.empty())SetWindowTextW(statusLabel,status.c_str());}}return 0;
+    case WM_SIZE:{SCROLLINFO info{};info.cbSize=sizeof(info);info.fMask=SIF_RANGE|SIF_PAGE|SIF_POS;info.nMin=0;info.nMax=px(802)-1;info.nPage=HIWORD(l);info.nPos=settingsScroll;SetScrollInfo(h,SB_VERT,&info,TRUE);return 0;}
+    case WM_MOUSEWHEEL:SendMessageW(h,WM_VSCROLL,GET_WHEEL_DELTA_WPARAM(w)>0?SB_LINEUP:SB_LINEDOWN,0);return 0;
+    case WM_VSCROLL:{SCROLLINFO info{};info.cbSize=sizeof(info);info.fMask=SIF_ALL;GetScrollInfo(h,SB_VERT,&info);int next=settingsScroll;
+        switch(LOWORD(w)){case SB_LINEUP:next-=px(48);break;case SB_LINEDOWN:next+=px(48);break;case SB_PAGEUP:next-=(int)info.nPage;break;case SB_PAGEDOWN:next+=(int)info.nPage;break;case SB_THUMBTRACK:next=info.nTrackPos;break;default:break;}
+        next=std::clamp(next,0,std::max(0,info.nMax-(int)info.nPage+1));
+        if(next!=settingsScroll){ScrollWindowEx(h,0,settingsScroll-next,nullptr,nullptr,nullptr,nullptr,SW_SCROLLCHILDREN|SW_INVALIDATE|SW_ERASE);settingsScroll=next;info.fMask=SIF_POS;info.nPos=next;SetScrollInfo(h,SB_VERT,&info,TRUE);}return 0;}
     case WM_ACTIVATE:
         if(componentSelfTest)++testActivationNotifications;
         if(!componentSelfTest){
@@ -239,6 +297,19 @@ static int render(const std::wstring& folder){
         for(char c:std::string("bank"))engine.type(c);popup.show(point);UpdateWindow(popup.handle());ok=snapshot(popup.handle(),folder+L"\\bank.png")&&ok;
         engine.reset();for(char c:std::string("running"))engine.type(c);popup.show(point);UpdateWindow(popup.handle());ok=snapshot(popup.handle(),folder+L"\\running.png")&&ok;
         engine.reset();for(char c:std::string("aple"))engine.type(c);engine.key(Key::Space);popup.show(point);UpdateWindow(popup.handle());ok=snapshot(popup.handle(),folder+L"\\correction.png")&&ok;
+        engine.reset();engine.sentenceMode=true;for(char c:std::string("I sat on the bank."))engine.type(c);auto revision=engine.beginTranslation();engine.completeTranslation(revision,engine.buffer,{{L"我坐在河岸上。",L""},{L"我坐在河边。",L""}});popup.show(point);UpdateWindow(popup.handle());ok=snapshot(popup.handle(),folder+L"\\sentence.png")&&ok;
+        engine.reset();for(char c:std::string("Please check the report before sending it to the team."))engine.type(c);revision=engine.beginTranslation();
+        std::wstring longText;for(int i=0;i<25;++i)longText+=L"这是用于检查候选全文滚动的测试内容：请核对数量、日期和否定范围，并保留所有细节。";longText+=L"【全文结束】";
+        engine.completeTranslation(revision,engine.buffer,{{longText,L""},{L"请检查报告，然后发给团队。",L""}});popup.show(point);UpdateWindow(popup.handle());ok=snapshot(popup.handle(),folder+L"\\long-collapsed.png")&&ok;
+        auto original=engine.buffer;popup.toggleDetails(point);UpdateWindow(popup.handle());SCROLLINFO scroll{};scroll.cbSize=sizeof(scroll);scroll.fMask=SIF_ALL;GetScrollInfo(popup.handle(),SB_VERT,&scroll);
+        bool full=engine.buffer==original&&engine.count()==2&&scroll.nMax>(int)scroll.nPage;
+        ok=snapshot(popup.handle(),folder+L"\\long-expanded.png")&&ok;
+        SendMessageW(popup.handle(),WM_VSCROLL,SB_BOTTOM,0);UpdateWindow(popup.handle());GetScrollInfo(popup.handle(),SB_VERT,&scroll);bool bottom=scroll.nPos==scroll.nMax-(int)scroll.nPage+1;
+        ok=snapshot(popup.handle(),folder+L"\\long-bottom.png")&&ok;
+        int retryCalls=0;popup.translate=[&](){++retryCalls;};RECT client{};GetClientRect(popup.handle(),&client);int dpi=(int)GetDpiForWindow(popup.handle());
+        SendMessageW(popup.handle(),WM_LBUTTONUP,0,MAKELPARAM(client.right-MulDiv(180,dpi,96),MulDiv(16,dpi,96)));
+        popup.toggleDetails(point);GetScrollInfo(popup.handle(),SB_VERT,&scroll);bool collapsed=scroll.nMax==0&&retryCalls==1&&engine.buffer==original&&engine.count()==2;
+        std::ofstream checks{std::filesystem::path(folder+L"\\interaction.json")};checks<<"{\"expanded_without_commit\":"<<(full?"true":"false")<<",\"scrolled_to_end\":"<<(bottom?"true":"false")<<",\"collapsed_and_retry_callback\":"<<(collapsed?"true":"false")<<"}";ok=ok&&full&&bottom&&collapsed;
     }
     DestroyWindow(mainWindow);Gdiplus::GdiplusShutdown(token);return ok?0:1;
 }
@@ -249,14 +320,23 @@ static int uiSelfTest(const std::wstring& report){
     // messages must not detach its context halfway through those synthetic keys.
     // Exercise the same focus handler explicitly at the intended boundaries.
     componentSelfTest=true;
+    // Component keys are driven below. A disabled test window must never accept
+    // the user's live keyboard/IME composition while its message queue pumps.
+    EnableWindow(mainWindow,FALSE);
     ShowWindow(mainWindow,SW_SHOWNOACTIVATE);UpdateWindow(mainWindow);pump();
     auto hr=startTrial();focusTrial(true);pump();
     auto value=[](){int n=GetWindowTextLengthW(edit);std::wstring s(n+1,L'\0');GetWindowTextW(edit,s.data(),n+1);s.resize(n);return s;};
+    SendMessageW(edit,WM_CHAR,L'外',0);
+    SendMessageW(edit,WM_IME_CHAR,L'部',0);
+    bool externalInputBlocked=value().empty();
     std::ostringstream trace;trace<<"[";unsigned keyIndex=0;
-    auto key=[&](UINT vk){BYTE state[256]{};BOOL keyboardSet=SetKeyboardState(state);auto scan=MapVirtualKeyW(vk,MAPVK_VK_TO_VSC);LPARAM param=(LPARAM)scan<<16;BOOL eaten=FALSE,testEaten=FALSE;
-        int ctrl=GetKeyState(VK_CONTROL),alt=GetKeyState(VK_MENU),leftWin=GetKeyState(VK_LWIN),rightWin=GetKeyState(VK_RWIN);
+    auto key=[&](UINT vk,bool control=false,bool shifted=false){
+        // TSF host sync may pump desktop keyboard messages. Set this test key's
+        // modifiers after syncing, and again at each direct sink invocation.
         if(trialStore)trialStore->sync();
-        if(trialSink&&trialContext){trialSink->OnTestKeyDown(trialContext,vk,param,&eaten);testEaten=eaten;if(eaten)trialSink->OnKeyDown(trialContext,vk,param,&eaten);}pump();
+        BYTE previous[256]{};GetKeyboardState(previous);BYTE state[256]{};if(control)state[VK_CONTROL]=0x80;if(shifted)state[VK_SHIFT]=0x80;BOOL keyboardSet=SetKeyboardState(state);auto scan=MapVirtualKeyW(vk,MAPVK_VK_TO_VSC);LPARAM param=(LPARAM)scan<<16;BOOL eaten=FALSE,testEaten=FALSE;
+        int ctrl=GetKeyState(VK_CONTROL),alt=GetKeyState(VK_MENU),leftWin=GetKeyState(VK_LWIN),rightWin=GetKeyState(VK_RWIN);
+        if(trialSink&&trialContext){SetKeyboardState(state);trialSink->OnTestKeyDown(trialContext,vk,param,&eaten);testEaten=eaten;if(eaten){SetKeyboardState(state);trialSink->OnKeyDown(trialContext,vk,param,&eaten);}}SetKeyboardState(previous);pump();
         if(keyIndex++)trace<<",";
         trace<<"{\"key\":"<<vk<<",\"tested\":"<<(testEaten?"true":"false")<<",\"eaten\":"<<(eaten?"true":"false")<<",\"keyboard_state_set\":"<<(keyboardSet?"true":"false")<<",\"ctrl\":"<<ctrl<<",\"alt\":"<<alt<<",\"left_win\":"<<leftWin<<",\"right_win\":"<<rightWin<<",\"text\":"<<json(value())<<"}";
         return eaten;};
@@ -287,11 +367,28 @@ static int uiSelfTest(const std::wstring& report){
     if(restoredIdentity)restoredIdentity->Release();
     if(expectedIdentity)expectedIdentity->Release();
     if(restoredDocument)restoredDocument->Release();
-    SetWindowTextW(edit,L"");pump();type("bank");key('2');auto resumed=value();trace<<"]";
+    SetWindowTextW(edit,L"");pump();type("bank");key('2');auto resumed=value();
+    std::wstring sentenceComposition,sentenceChinese,sentenceEnglish,staleEdited,staleFocus;
+    bool sentenceOk=true;
+    if(sentenceSelfTest){
+        auto typeSentence=[&](const char* text){for(;*text;++text){SHORT mapped=VkKeyScanA(*text);key(LOBYTE(mapped),false,(HIBYTE(mapped)&1)!=0);}};
+        auto wait=[](){auto until=GetTickCount64()+15000;while(GetTickCount64()<until)pump();};
+        SetWindowTextW(edit,L"");pump();key(VK_SPACE,true,true);typeSentence("I sat on the bank.");sentenceComposition=value();key(VK_RETURN);wait();key(VK_RETURN);sentenceChinese=value();
+        SetWindowTextW(edit,L"");pump();typeSentence("I have 2 apples.");key(VK_RETURN,true);sentenceEnglish=value();
+        SetWindowTextW(edit,L"");pump();typeSentence("i have red books.");key(VK_HOME);key(VK_RIGHT,true);key(VK_RIGHT,true);key(VK_RIGHT,true,true);typeSentence("blue ");auto replaced=value();
+        key(VK_END);key(VK_LEFT,false,true);key(VK_LEFT,false,true);DWORD selStart=0,selEnd=0;SendMessageW(edit,EM_GETSEL,(WPARAM)&selStart,(LPARAM)&selEnd);bool reversed=selEnd-selStart==2;
+        SendMessageW(edit,EM_SETSEL,7,11);pump();typeSentence("green");auto mouseEdited=value();key(VK_RETURN,true);
+        sentenceOk=replaced==L"i have blue books."&&reversed&&mouseEdited==L"i have green books.";
+        SetWindowTextW(edit,L"");pump();typeSentence("I sat on the bank.");key(VK_RETURN);key('S');wait();staleEdited=value();key(VK_RETURN,true);
+        SetWindowTextW(edit,L"");pump();typeSentence("I sat on the bank.");key(VK_RETURN);focusTrial(false);pump();focusTrial(true);SetWindowTextW(edit,L"");pump();typeSentence("new text");wait();staleFocus=value();key(VK_RETURN,true);
+        sentenceOk=sentenceOk&&sentenceComposition==L"I sat on the bank."&&sentenceChinese.find(L"河岸")!=std::wstring::npos&&sentenceChinese.find(L"bank")==std::wstring::npos&&sentenceEnglish==L"I have 2 apples."&&staleEdited==L"I sat on the bank.s"&&staleFocus==L"new text";
+        std::ofstream detail{std::filesystem::path(report+L".sentences.json")};detail<<"{\"passed\":"<<(sentenceOk?"true":"false")<<",\"composition\":"<<json(sentenceComposition)<<",\"chinese\":"<<json(sentenceChinese)<<",\"english\":"<<json(sentenceEnglish)<<",\"middle_replaced\":"<<json(replaced)<<",\"shift_selection_start\":"<<selStart<<",\"shift_selection_end\":"<<selEnd<<",\"mouse_replaced\":"<<json(mouseEdited)<<",\"stale_edited\":"<<json(staleEdited)<<",\"stale_focus\":"<<json(staleFocus)<<"}";
+    }
+    trace<<"]";
     // Windows may report another native document for an inactive test window.
     // Assert the explicit request and actual preview text restoration; retain
     // the observed desktop document identity separately in the report.
-    bool ok=hr==S_OK&&bank==L"河岸"&&apple==L"苹果"&&went==L"去"&&english==L"hello"&&typo==L"aple"&&correction==L"apple"&&correctedChinese==L"苹果"&&cancelled.empty()&&focusEnglish==L"app"&&SUCCEEDED(lostFocusHr)&&SUCCEEDED(restoreFocusHr)&&resumed==L"河岸";
+    bool ok=externalInputBlocked&&sentenceOk&&hr==S_OK&&bank==L"河岸"&&apple==L"苹果"&&went==L"去"&&english==L"hello"&&typo==L"aple"&&correction==L"apple"&&correctedChinese==L"苹果"&&cancelled.empty()&&focusEnglish==L"app"&&SUCCEEDED(lostFocusHr)&&SUCCEEDED(restoreFocusHr)&&resumed==L"河岸";
     std::ofstream f{std::filesystem::path(report)};f<<"{\"passed\":"<<(ok?"true":"false")<<",\"scope\":\"component-preview\",\"activation_hr\":"<<(unsigned long)hr<<",\"bank\":"<<json(bank)<<",\"apple\":"<<json(apple)<<",\"went\":"<<json(went)<<",\"english\":"<<json(english)<<",\"typo_before_confirmation\":"<<json(typo)<<",\"corrected_english\":"<<json(correction)<<",\"corrected_chinese\":"<<json(correctedChinese)<<",\"cancelled\":"<<json(cancelled)<<",\"focus_english\":"<<json(focusEnglish)<<",\"resumed\":"<<json(resumed);
     f<<",\"restored_document_focus\":"<<(restored?"true":"false")<<",\"lose_focus_hr\":"<<(unsigned long)lostFocusHr<<",\"restore_focus_hr\":"<<(unsigned long)restoreFocusHr<<",\"query_focus_hr\":"<<(unsigned long)queryFocusHr<<",\"native_activation_notifications\":"<<testActivationNotifications<<",\"native_edit_focus_notifications\":"<<testEditFocusNotifications<<",\"key_trace\":"<<trace.str()<<"}";f.close();
     endTrial();DestroyWindow(mainWindow);return ok?0:1;
@@ -299,19 +396,37 @@ static int uiSelfTest(const std::wstring& report){
 int WINAPI wWinMain(HINSTANCE inst,HINSTANCE,LPWSTR,int show){
     instance=inst;SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     root=moduleRoot(inst);int argc;auto argv=CommandLineToArgvW(GetCommandLineW(),&argc);
-    if(argc>=3&&wcscmp(argv[1],L"--speak")==0){bool ok=speak(argv[2],readSettings().british);LocalFree(argv);CoUninitialize();return ok?0:1;}
+    if(argc>=3&&wcscmp(argv[1],L"--speak")==0){
+        auto settings=readSettings();bool ok=false;
+        HANDLE mutex=CreateMutexW(nullptr,FALSE,L"Local\\EType.Speech.Mutex.v2");
+        HANDLE cancel=prepareSpeechWorker();
+        if(mutex&&cancel){HANDLE waits[]{cancel,mutex};DWORD lock=WaitForMultipleObjects(2,waits,FALSE,65000);
+            if(lock==WAIT_OBJECT_0+1||lock==WAIT_ABANDONED_0+1){
+                if(settings.british){publishSpeechState(SpeechState::Playing);ok=speak(argv[2],true,true,L"",settings.volume,cancel);}
+                else try{auto wav=speechLocal(utf8(argv[2]),settings.maleVoice,settings.slowSpeech,cancel);if(WaitForSingleObject(cancel,0)!=WAIT_OBJECT_0){publishSpeechState(SpeechState::Playing);ok=playLocalAudio(wav,settings.volume,cancel);}}catch(...){}
+                ReleaseMutex(mutex);
+            }
+        }
+        publishSpeechState(ok?SpeechState::Finished:(cancel&&WaitForSingleObject(cancel,0)==WAIT_OBJECT_0?SpeechState::Stopped:SpeechState::Failed));
+        if(cancel)CloseHandle(cancel);if(mutex)CloseHandle(mutex);LocalFree(argv);CoUninitialize();return ok?0:1;
+    }
+    if(argc>=3&&wcscmp(argv[1],L"--natural-speech-test")==0){bool ok=false;try{auto wav=speechLocal("I sat on the bank.",false,false);std::ofstream f{std::filesystem::path(argv[2]),std::ios::binary};f.write((const char*)wav.data(),(std::streamsize)wav.size());ok=(bool)f;}catch(...){}LocalFree(argv);CoUninitialize();return ok?0:1;}
     if(argc>=3&&wcscmp(argv[1],L"--speech-test")==0){bool ok=speak(L"apple",false,true,argv[2]);LocalFree(argv);CoUninitialize();return ok?0:1;}
     dictionary=loadDictionary(root);
     if(argc>=3&&wcscmp(argv[1],L"--diagnose")==0){diagnostics(argv[2]);LocalFree(argv);CoUninitialize();return 0;}
     if(argc>=2&&wcscmp(argv[1],L"--activate")==0){auto hr=activate();LocalFree(argv);CoUninitialize();return hr==S_OK?0:1;}
-    std::wstring renderFolder,uiReport;if(argc>=3&&wcscmp(argv[1],L"--render")==0)renderFolder=argv[2];if(argc>=3&&wcscmp(argv[1],L"--ui-selftest")==0)uiReport=argv[2];
+    std::wstring renderFolder,uiReport;if(argc>=3&&wcscmp(argv[1],L"--render")==0)renderFolder=argv[2];if(argc>=3&&(wcscmp(argv[1],L"--ui-selftest")==0||wcscmp(argv[1],L"--sentence-selftest")==0)){uiReport=argv[2];sentenceSelfTest=wcscmp(argv[1],L"--sentence-selftest")==0;
+        componentSelfTest=true;
+        SetEnvironmentVariableW(L"ETYPE_HEADLESS_TEST",L"1");auto isolated=uiReport+L".ini";DeleteFileW(isolated.c_str());SetEnvironmentVariableW(L"ETYPE_TEST_SETTINGS",isolated.c_str());}
     LocalFree(argv);
     if(!dictionary->size()){MessageBoxW(nullptr,L"未能加载离线词库。请将整个 EType 文件夹解压后运行，或重新安装。",L"EType",MB_OK|MB_ICONERROR);CoUninitialize();return 1;}
     INITCOMMONCONTROLSEX cc{sizeof(cc),ICC_BAR_CLASSES};InitCommonControlsEx(&cc);
     scale=(int)GetDpiForSystem()*100/96;
+    RECT workArea{};SystemParametersInfoW(SPI_GETWORKAREA,0,&workArea,0);scale=std::min(scale,std::max(75,(int)(workArea.right-workArea.left-48)*100/776));
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.lpfnWndProc=proc;wc.hInstance=inst;wc.lpszClassName=L"EType.Settings";wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);wc.hIcon=LoadIconW(inst,MAKEINTRESOURCEW(1));wc.hbrBackground=CreateSolidBrush(RGB(246,249,246));RegisterClassExW(&wc);
-    RECT area{0,0,px(776),px(687)};AdjustWindowRectEx(&area,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,FALSE,0);
-    mainWindow=CreateWindowExW(0,wc.lpszClassName,ETypeName,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,CW_USEDEFAULT,CW_USEDEFAULT,area.right-area.left,area.bottom-area.top,nullptr,nullptr,inst,nullptr);
+    DWORD windowStyle=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_VSCROLL;
+    RECT area{0,0,px(776),std::min(px(802),(int)(workArea.bottom-workArea.top-80))};AdjustWindowRectEx(&area,windowStyle,FALSE,0);
+    mainWindow=CreateWindowExW(0,wc.lpszClassName,ETypeName,windowStyle,CW_USEDEFAULT,CW_USEDEFAULT,area.right-area.left,area.bottom-area.top,nullptr,nullptr,inst,nullptr);
     if(!renderFolder.empty()){int code=render(renderFolder);CoUninitialize();return code;}
     if(!uiReport.empty()){int code=uiSelfTest(uiReport);CoUninitialize();return code;}
     ShowWindow(mainWindow,show);UpdateWindow(mainWindow);MSG msg;while(GetMessageW(&msg,nullptr,0,0)>0){

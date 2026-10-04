@@ -3,6 +3,7 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
+#include <cstdint>
 
 namespace etype {
 struct Candidate { std::wstring text, pos; };
@@ -24,13 +25,13 @@ public:
 private:
     std::unordered_map<std::string, Entry> entries_;
 };
-enum class Key { Space, Enter, Backspace, Escape, Up, Down, PageUp, PageDown, Toggle };
+enum class Key { Space, Enter, CommitEnglish, Backspace, Escape, Up, Down, PageUp, PageDown, Toggle, Left, Right, Home, End, Delete };
 struct Result { std::wstring output; bool consumed = true; bool changed = true; };
 class Engine {
 public:
     explicit Engine(std::shared_ptr<const Dictionary> dict) : dictionary(std::move(dict)) {}
     Result type(char value);
-    Result key(Key key);
+    Result key(Key key, bool extendSelection=false, bool byWord=false);
     Result choose(size_t pageIndex);
     Result punctuation(wchar_t value);
     Result finish();
@@ -38,12 +39,26 @@ public:
     size_t count() const;
     size_t pageStart() const { return (selected / 5) * 5; }
     void reset();
+    void invalidate();
+    void setSelection(size_t active, size_t anchor);
+    bool hasSelection() const { return caret != selectionAnchor; }
+    uint64_t beginTranslation();
+    bool completeTranslation(uint64_t revision, const std::string& original,
+                             std::vector<Candidate> values, std::wstring error = {});
     std::shared_ptr<const Dictionary> dictionary;
     std::string buffer;
     std::vector<std::string> corrections;
     bool correcting = false, english = false, chinesePunctuation = true;
+    bool sentenceMode = false, translating = false;
+    uint64_t revision = 0;
+    std::vector<Candidate> sentences;
+    std::wstring sentenceStatus;
     size_t selected = 0;
+    size_t caret = 0, selectionAnchor = 0;
 private:
+    size_t wordLeft() const;
+    size_t wordRight() const;
+    void eraseSelection();
     bool doubleQuote_ = false, singleQuote_ = false;
 };
 }

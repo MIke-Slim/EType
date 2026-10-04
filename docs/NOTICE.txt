@@ -21,3 +21,13 @@ https://jrsoftware.org/isinfo.php
 The Simplified Chinese installer translation is sourced from the official
 issrc Languages directory; original translator notices remain in the source.
 https://github.com/jrsoftware/issrc/tree/main/Files/Languages
+
+The 0.2.0 standalone package includes Qwen3-4B-Q4_K_M, Kokoro and llama.cpp.
+Their licenses and model sources are included in licenses/ and models/source-manifest.json.
+The speech engine uses the bundled espeak-ng library, distributed under GPLv3;
+its license is included with the Python package notices. Corresponding source:
+https://github.com/espeak-ng/espeak-ng
+https://github.com/thewh1teagle/espeakng-loader (bundled loader version 0.2.4).
+The frozen Python worker includes Python and third-party dependency license notices
+under licenses/python-packages. PyInstaller's distribution exception permits the
+generated runtime distribution; its license and exception are included there.

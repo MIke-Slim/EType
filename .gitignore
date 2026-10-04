@@ -15,3 +15,4 @@ drone-concept/
 .env.*
 *.pfx
 *.pem
+releases/EType-0.2.*-Setup.exe

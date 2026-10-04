@@ -1,13 +1,16 @@
 ; Validation is compile-time only. Production has no registration bypass.
 #ifndef AppVersion
-  #define AppVersion "0.1.1"
+  #define AppVersion "0.2.0"
+#endif
+#ifndef PackageRoot
+  #define PackageRoot "..\build\standalone\EType"
 #endif
 #ifdef InstallerTestMode
   #define PackageId "EType.InstallerValidation"
   #define Title "EType 安装流程验证"
 #else
   #define PackageId "EType.WindowsInputMethod"
-  #define Title "EType 英文词汇输入法"
+  #define Title "EType 单词与句子"
 #endif
 
 [Setup]
@@ -31,8 +34,9 @@ MinVersion=10.0
 WizardStyle=modern
 SetupIconFile=..\assets\etype.ico
 SetupLogging=yes
-Compression=lzma2/max
-SolidCompression=yes
+; Model weights dominate size. Deflate avoids long solid-stream installation.
+Compression=zip/1
+SolidCompression=no
 CloseApplications=no
 AllowCancelDuringInstall=yes
 RestartApplications=no
@@ -61,20 +65,21 @@ Source: "validation.id"; DestDir: "{app}"; DestName: "etype-installation.id"; Fl
 #else
 Source: "production.id"; DestDir: "{app}"; DestName: "etype-installation.id"; Flags: ignoreversion
 #endif
-Source: "..\build\EType\*"; DestDir: "{app}"; Excludes: "x64\*,x86\*"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PackageRoot}\*"; DestDir: "{app}"; Excludes: "x64\*,x86\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 #ifdef InstallerTestMode
-Source: "..\build\EType\x86\EType.dll"; DestDir: "{app}\x86"; Flags: ignoreversion
-Source: "..\build\EType\x64\EType.dll"; DestDir: "{app}\x64"; Flags: ignoreversion; AfterInstall: RegisterComponents
+Source: "{#PackageRoot}\x86\EType.dll"; DestDir: "{app}\x86"; Flags: ignoreversion
+Source: "{#PackageRoot}\x64\EType.dll"; DestDir: "{app}\x64"; Flags: ignoreversion; AfterInstall: RegisterComponents
 #else
-Source: "..\build\EType\x86\EType.dll"; DestDir: "{app}\x86"; Flags: ignoreversion regserver 32bit
-Source: "..\build\EType\x64\EType.dll"; DestDir: "{app}\x64"; Flags: ignoreversion regserver 64bit; AfterInstall: RegisterComponents
+Source: "{#PackageRoot}\x86\EType.dll"; DestDir: "{app}\x86"; Flags: ignoreversion regserver 32bit
+Source: "{#PackageRoot}\x64\EType.dll"; DestDir: "{app}\x64"; Flags: ignoreversion regserver 64bit; AfterInstall: RegisterComponents
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; Flags: unchecked
 
 [Icons]
-Name: "{autoprograms}\EType 英文词汇输入法"; Filename: "{app}\EType.exe"; WorkingDir: "{app}"
-Name: "{autodesktop}\EType 英文词汇输入法"; Filename: "{app}\EType.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\EType 单词与句子"; Filename: "{app}\EType.exe"; WorkingDir: "{app}"
+Name: "{autodesktop}\EType 单词与句子"; Filename: "{app}\EType.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\EType 本地服务"; Filename: "http://127.0.0.1:49181/"
 
 [Run]
 Filename: "{app}\EType.exe"; Description: "打开 EType 设置与试用"; Flags: nowait postinstall skipifsilent runasoriginaluser
@@ -88,7 +93,8 @@ chinesesimp.FinishedLabelNoIcons=EType 已安装。请使用 Windows 输入法�
 [Code]
 const
   OwnUninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#PackageId}_is1';
-  ETypeClassKey = 'Software\Classes\CLSID\{DC168F35-18EA-4EC5-B391-C4430C3F3ED9}\InprocServer32';
+  ETypeClassKey = 'Software\Classes\CLSID\{B61C1452-3E9A-4616-9EA3-18B4E5862CA4}\InprocServer32';
+  LegacyClassKey = 'Software\Classes\CLSID\{DC168F35-18EA-4EC5-B391-C4430C3F3ED9}\InprocServer32';
   ETypeMarker = 'etype-installation.id';
 var
   ExistingDir: String;
@@ -200,7 +206,9 @@ begin
   RegQueryStringValue(HKLM64, OwnUninstallKey, 'InstallLocation', ExistingDir);
   if ExistingDir = '' then begin
     if RegQueryStringValue(HKLM64, ETypeClassKey, '', RegisteredDll) or
-      RegQueryStringValue(HKLM32, ETypeClassKey, '', RegisteredDll) then begin
+      RegQueryStringValue(HKLM32, ETypeClassKey, '', RegisteredDll) or
+      RegQueryStringValue(HKLM64, LegacyClassKey, '', RegisteredDll) or
+      RegQueryStringValue(HKLM32, LegacyClassKey, '', RegisteredDll) then begin
       SuppressibleMsgBox('检测到旧版或手动注册的 EType。请先从旧程序卸载，再运行此安装包。', mbError, MB_OK, IDOK);
       Result := False;
       exit;
@@ -293,13 +301,14 @@ begin
   if Result then begin
     for Attempt := 1 to 10 do begin
       Result := FileUnlocked(ExpandConstant('{app}\EType.exe')) and
+        FileUnlocked(ExpandConstant('{app}\runtime\ETypeService.exe')) and
         FileUnlocked(ExpandConstant('{app}\x64\EType.dll')) and
         FileUnlocked(ExpandConstant('{app}\x86\EType.dll'));
       if Result then break;
       Sleep(100);
     end;
     if not Result then
-      SuppressibleMsgBox('EType 文件正在使用或无法访问，尚未取消注册或删除文件。请关闭 EType 设置窗口，切换到其他输入法并关闭相关软件，确认访问权限后重试。', mbError, MB_OK, IDOK);
+      SuppressibleMsgBox('EType 文件正在使用或无法访问，尚未取消注册或删除文件。请关闭设置窗口，切换到其他输入法并关闭相关软件；如本地服务正在运行，请打开 http://127.0.0.1:49181/ 点击关闭服务后重试。', mbError, MB_OK, IDOK);
   end;
 #ifndef InstallerTestMode
   if Result then begin

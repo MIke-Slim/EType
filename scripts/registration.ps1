@@ -28,7 +28,14 @@ if ($Action -eq 'Install') {
         if (-not (Test-Path -LiteralPath (Join-Path $target $file) -PathType Leaf)) { throw "Package file missing: $file" }
     }
 }
-$classKey = 'Software\Classes\CLSID\{DC168F35-18EA-4EC5-B391-C4430C3F3ED9}\InprocServer32'
+$classId = '{DC168F35-18EA-4EC5-B391-C4430C3F3ED9}'
+$identityPath = Join-Path $target 'input-service-identity.json'
+if (Test-Path -LiteralPath $identityPath) {
+    $identity = Get-Content -LiteralPath $identityPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($identity.clsid -notin @($classId,'{B61C1452-3E9A-4616-9EA3-18B4E5862CA4}')) { throw 'Unknown EType input-service identity.' }
+    $classId = $identity.clsid
+}
+$classKey = 'Software\Classes\CLSID\'+$classId+'\InprocServer32'
 $hadRegistration = $false
 foreach ($entry in @(@([Microsoft.Win32.RegistryView]::Registry64,'x64'),@([Microsoft.Win32.RegistryView]::Registry32,'x86'))) {
     $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine,$entry[0])

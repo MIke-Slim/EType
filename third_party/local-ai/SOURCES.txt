@@ -1,0 +1,14 @@
+Qwen3-4B-GGUF: revision bc640142c66e1fdd12af0bd68f40445458f3869b
+https://huggingface.co/Qwen/Qwen3-4B-GGUF
+Kokoro-82M model and voices:
+https://huggingface.co/hexgrad/Kokoro-82M
+https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0
+llama.cpp: b11146, native CPU/CUDA 12.4 runtime
+https://github.com/ggml-org/llama.cpp/tree/b11146
+eSpeak NG: loaded library reports 1.52.0, shipped by espeakng-loader 0.2.4
+https://github.com/espeak-ng/espeak-ng/tree/1.52.0
+https://github.com/thewh1teagle/espeakng-loader
+phonemizer-fork: 3.3.2; Python sources are included by --collect-all phonemizer
+https://pypi.org/project/phonemizer-fork/3.3.2/
+Python dependency versions are recorded in tools/local-ai-requirements.txt.
+Model asset downloads and SHA256 hashes are recorded in models/source-manifest.json.
