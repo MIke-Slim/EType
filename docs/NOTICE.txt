@@ -14,3 +14,10 @@ Built with LLVM MinGW. Statically linked runtime notices are included in
 licenses/LLVM-LICENSE.txt and licenses/COPYING*. The development toolchain
 itself is not needed to run EType.
 https://github.com/mstorsjo/llvm-mingw
+
+The EXE installer is built with official Inno Setup 6.7.3 by Jordan Russell
+and Martijn Laan. Its license is included in licenses/InnoSetup-LICENSE.txt.
+https://jrsoftware.org/isinfo.php
+The Simplified Chinese installer translation is sourced from the official
+issrc Languages directory; original translator notices remain in the source.
+https://github.com/jrsoftware/issrc/tree/main/Files/Languages

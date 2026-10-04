@@ -33,6 +33,7 @@ class TextService final:public ITfTextInputProcessor,public ITfKeyEventSink,publ
     DWORD threadCookie_=TF_INVALID_COOKIE;
     bool shiftAlone_=false,ending_=false;
     bool preview_=false;
+    unsigned long long contextEpoch_=0;
     std::wstring root_;
     Engine engine_;
     Popup popup_;
@@ -45,6 +46,16 @@ class TextService final:public ITfTextInputProcessor,public ITfKeyEventSink,publ
         HRESULT hr=context->RequestEditSession(client_,session,(forceAsync?TF_ES_ASYNC:TF_ES_SYNC)|TF_ES_READWRITE,&result);
         if(!forceAsync && (hr==TF_E_SYNCHRONOUS || result==TF_E_SYNCHRONOUS || result==TF_E_LOCKED))hr=context->RequestEditSession(client_,session,TF_ES_ASYNC|TF_ES_READWRITE,&result);
         session->Release();return FAILED(hr)?hr:result;
+    }
+    HRESULT requestInput(ITfContext* context,std::function<HRESULT(TfEditCookie)> action,bool forceAsync=false) {
+        auto epoch=contextEpoch_;
+        return request(context,[this,context,epoch,action=std::move(action)](TfEditCookie cookie){
+            // A host can grant an asynchronous lock after focus has moved, even
+            // after moving away and back to the same context. Never dispatch a
+            // stale key or candidate into the current composition.
+            if(context_!=context||contextEpoch_!=epoch)return S_OK;
+            return action(cookie);
+        },forceAsync);
     }
     bool enabled(ITfContext* c) {
         if(!c)return false;
@@ -70,6 +81,7 @@ class TextService final:public ITfTextInputProcessor,public ITfKeyEventSink,publ
         int n=ToUnicodeEx((UINT)key,(UINT)((param>>16)&255),state,chars,8,4,GetKeyboardLayout(0));return n==1?chars[0]:0;
     }
     bool test(ITfContext* c,WPARAM key,LPARAM param) {
+        engine_.chinesePunctuation=readSettings().chinesePunctuation;
         if(!enabled(c))return false;
         if(GetKeyState(VK_CONTROL)&0x8000 || GetKeyState(VK_MENU)&0x8000 || GetKeyState(VK_LWIN)&0x8000 || GetKeyState(VK_RWIN)&0x8000)return false;
         if(key==VK_SHIFT||key==VK_LSHIFT||key==VK_RSHIFT)return true;
@@ -133,6 +145,7 @@ class TextService final:public ITfTextInputProcessor,public ITfKeyEventSink,publ
         detach();context_=c;if(context_)context_->AddRef();
     }
     void detach() {
+        ++contextEpoch_;
         popup_.hide();engine_.reset();
         auto oldContext=context_;auto oldComposition=composition_;context_=nullptr;composition_=nullptr;
         if(oldComposition&&oldContext){
@@ -162,7 +175,7 @@ public:
     TextService():root_(moduleRoot(module)),engine_(loadDictionary(root_)),popup_(module,engine_,root_) {
         ++objects;
         engine_.chinesePunctuation=readSettings().chinesePunctuation;
-        popup_.select=[this](size_t index){if(context_)request(context_,[this,index](TfEditCookie cookie){return apply(cookie,engine_.choose(index));},true);};
+        popup_.select=[this](size_t index){if(context_)requestInput(context_,[this,index](TfEditCookie cookie){return apply(cookie,engine_.choose(index));},true);};
     }
     ~TextService(){release(composition_);release(context_);release(thread_);--objects;}
     STDMETHODIMP QueryInterface(REFIID id,void** p)override {
@@ -207,9 +220,8 @@ public:
         *eaten=test(c,w,l);
         if(w==VK_SHIFT||w==VK_LSHIFT||w==VK_RSHIFT){shiftAlone_=*eaten!=FALSE;return S_OK;}
         shiftAlone_=false;if(!*eaten)return S_OK;attach(c);
-        engine_.chinesePunctuation=readSettings().chinesePunctuation;
         wchar_t ch=character(w,l);
-        HRESULT hr=request(c,[this,w,ch](TfEditCookie cookie){return apply(cookie,dispatch(w,ch));});
+        HRESULT hr=requestInput(c,[this,w,ch](TfEditCookie cookie){return apply(cookie,dispatch(w,ch));});
         if(FAILED(hr)){detach();*eaten=FALSE;}
         return S_OK;
     }
@@ -217,7 +229,7 @@ public:
         *eaten=FALSE;
         if((w==VK_SHIFT||w==VK_LSHIFT||w==VK_RSHIFT)&&shiftAlone_){
             shiftAlone_=false;*eaten=TRUE;attach(c);
-            request(c,[this](TfEditCookie cookie){auto r=engine_.key(Key::Toggle);HRESULT hr=S_OK;if(composition_||!r.output.empty())hr=apply(cookie,r);popup_.show(anchor_,true);return hr;});
+            requestInput(c,[this](TfEditCookie cookie){auto r=engine_.key(Key::Toggle);HRESULT hr=S_OK;if(composition_||!r.output.empty())hr=apply(cookie,r);popup_.show(anchor_,true);return hr;});
         }
         return S_OK;
     }
@@ -272,10 +284,40 @@ extern "C" HRESULT WINAPI DllRegisterServer(){
 }
 extern "C" HRESULT WINAPI DllUnregisterServer(){
     HRESULT init=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);bool uninit=SUCCEEDED(init);
+    if(FAILED(init)&&init!=RPC_E_CHANGED_MODE)return init;
+    HRESULT result=S_OK;
+    auto retainFailure=[&](HRESULT hr){if(FAILED(hr)&&SUCCEEDED(result))result=hr;};
     ITfInputProcessorProfileMgr* profiles=nullptr;HRESULT hr=CoCreateInstance(CLSID_TF_InputProcessorProfiles,nullptr,CLSCTX_INPROC_SERVER,IID_ITfInputProcessorProfileMgr,(void**)&profiles);
-    // The second architecture may see a profile already removed by the first.
-    if(SUCCEEDED(hr)){profiles->UnregisterProfile(ETypeClsid,ETypeLanguage,ETypeProfile,0);release(profiles);}
-    ITfCategoryMgr* categories=nullptr;if(SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr,nullptr,CLSCTX_INPROC_SERVER,IID_ITfCategoryMgr,(void**)&categories))){categories->UnregisterCategory(ETypeClsid,GUID_TFCAT_TIP_KEYBOARD,ETypeClsid);release(categories);}
-    LONG err=RegDeleteTreeW(HKEY_LOCAL_MACHINE,classKey().c_str());if(err!=ERROR_SUCCESS&&err!=ERROR_FILE_NOT_FOUND)hr=HRESULT_FROM_WIN32(err);
-    if(uninit)CoUninitialize();return (err==ERROR_SUCCESS||err==ERROR_FILE_NOT_FOUND)?S_OK:HRESULT_FROM_WIN32(err);
+    if(SUCCEEDED(hr)){
+        // Enumerate first so the second architecture's removal is idempotent.
+        // An API failure is never treated as evidence that a profile is absent.
+        IEnumTfInputProcessorProfiles* enumeration=nullptr;hr=profiles->EnumProfiles(ETypeLanguage,&enumeration);
+        bool present=false;
+        if(SUCCEEDED(hr)){
+            TF_INPUTPROCESSORPROFILE profile{};ULONG fetched=0;
+            while((hr=enumeration->Next(1,&profile,&fetched))==S_OK&&fetched){if(profile.clsid==ETypeClsid&&profile.guidProfile==ETypeProfile){present=true;break;}}
+            release(enumeration);
+        }
+        retainFailure(hr);
+        if(present)retainFailure(profiles->UnregisterProfile(ETypeClsid,ETypeLanguage,ETypeProfile,0));
+        release(profiles);
+    }else retainFailure(hr);
+    ITfCategoryMgr* categories=nullptr;hr=CoCreateInstance(CLSID_TF_CategoryMgr,nullptr,CLSCTX_INPROC_SERVER,IID_ITfCategoryMgr,(void**)&categories);
+    if(SUCCEEDED(hr)){
+        IEnumGUID* enumeration=nullptr;hr=categories->EnumCategoriesInItem(ETypeClsid,&enumeration);bool present=false;
+        if(SUCCEEDED(hr)){
+            GUID category{};ULONG fetched=0;
+            while((hr=enumeration->Next(1,&category,&fetched))==S_OK&&fetched){if(category==GUID_TFCAT_TIP_KEYBOARD){present=true;break;}}
+            release(enumeration);
+        }
+        retainFailure(hr);
+        if(present)retainFailure(categories->UnregisterCategory(ETypeClsid,GUID_TFCAT_TIP_KEYBOARD,ETypeClsid));
+        release(categories);
+    }else retainFailure(hr);
+    // Keep COM metadata available when TSF removal failed so uninstall can retry.
+    if(SUCCEEDED(result)){
+        LONG err=RegDeleteTreeW(HKEY_LOCAL_MACHINE,classKey().c_str());
+        if(err!=ERROR_SUCCESS&&err!=ERROR_FILE_NOT_FOUND)result=HRESULT_FROM_WIN32(err);
+    }
+    if(uninit)CoUninitialize();return result;
 }

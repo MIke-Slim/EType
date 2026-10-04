@@ -100,8 +100,8 @@ Result Engine::key(Key k) {
         correcting=true; corrections=dictionary->correct(buffer); selected=0; return {};
     case Key::Up: if(count())selected=(selected+count()-1)%count(); return {};
     case Key::Down: if(count())selected=(selected+1)%count(); return {};
-    case Key::PageUp: if(count())selected=pageStart()>=5?pageStart()-5:0; return {};
-    case Key::PageDown: if(count())selected=std::min(pageStart()+5,count()-1); return {};
+    case Key::PageUp: if(count()&&pageStart()>=5)selected=pageStart()-5; return {};
+    case Key::PageDown: if(pageStart()+5<count())selected=pageStart()+5; return {};
     default:return {};
     }
 }

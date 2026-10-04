@@ -19,6 +19,11 @@ std::shared_ptr<const Dictionary> loadDictionary(const std::wstring& root) {
     auto d=std::make_shared<Dictionary>(); d->load(root+L"\\data\\dictionary.tsv"); cached=d; return d;
 }
 std::wstring settingsFile() {
+    // Isolate component tests from the user's saved preferences.
+    if(GetEnvironmentVariableW(L"ETYPE_HEADLESS_TEST",nullptr,0)){
+        wchar_t file[32768]{};DWORD n=GetEnvironmentVariableW(L"ETYPE_TEST_SETTINGS",file,32768);
+        if(n&&n<32768)return std::wstring(file,n);
+    }
     wchar_t path[MAX_PATH]; if(FAILED(SHGetFolderPathW(nullptr,CSIDL_LOCAL_APPDATA,nullptr,SHGFP_TYPE_CURRENT,path)))return {};
     auto folder=std::wstring(path)+L"\\EType"; CreateDirectoryW(folder.c_str(),nullptr); return folder+L"\\settings.ini";
 }

@@ -3,6 +3,7 @@ import hashlib
 import json
 import pathlib
 import zipfile
+from datetime import datetime, timezone, timedelta
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BUILD = ROOT / 'build'
@@ -10,6 +11,12 @@ PACKAGE = BUILD / 'EType'
 
 
 def main():
+    evidence = json.loads((BUILD / 'build-test-evidence.json').read_text(encoding='utf-8'))
+    if not evidence.get('passed'):
+        raise RuntimeError('Verified build evidence is missing.')
+    for relative, expected in evidence['files'].items():
+        if hashlib.sha256((PACKAGE / relative).read_bytes()).hexdigest() != expected:
+            raise RuntimeError(f'File changed after tests: {relative}')
     ui = json.loads((BUILD / 'ui-selftest.json').read_text(encoding='utf-8'))
     if not ui.get('passed'):
         raise RuntimeError('Preview text-box tests did not pass.')
@@ -18,7 +25,7 @@ def main():
         if 'failures=0' not in result:
             raise RuntimeError(f'Test evidence missing or failed: {name}')
     for name in ('EType.exe', 'x64/EType.dll', 'x86/EType.dll', 'data/dictionary.tsv',
-                 'data/manifest.json', 'install.ps1', 'uninstall.ps1', '使用说明.txt'):
+                 'data/manifest.json', 'install.ps1', 'uninstall.ps1', 'registration.ps1', '使用说明.txt'):
         if not (PACKAGE / name).is_file():
             raise RuntimeError(f'Package file missing: {name}')
     (PACKAGE / '验证记录.md').write_bytes((ROOT / 'docs/验证记录.md').read_bytes())
@@ -28,11 +35,12 @@ def main():
             content = path.read_bytes()
             files[path.relative_to(PACKAGE).as_posix()] = {
                 'bytes': len(content), 'sha256': hashlib.sha256(content).hexdigest()}
-    manifest = {'version': '0.1.0', 'platform': 'Windows x64 with x86 input service',
-                'verified_on': '2026-10-03', 'ui_selftest': ui, 'files': files}
+    manifest = {'version': '0.1.1', 'platform': 'Windows x64 with x86 input service',
+                'verified_on': datetime.now(timezone(timedelta(hours=8))).date().isoformat(),
+                'tested_build': evidence, 'ui_selftest': ui, 'files': files}
     (PACKAGE / 'package-manifest.json').write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
-    archive = BUILD / 'EType-0.1.0-Windows.zip'
+    archive = BUILD / 'EType-0.1.1-Windows.zip'
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as output:
         for path in sorted(PACKAGE.rglob('*')):
             if path.is_file():

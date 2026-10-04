@@ -19,6 +19,14 @@ POS = {'n.':'名词','v.':'动词','vt.':'及物动词','vi.':'不及物动词',
        'aux.':'助动词','modal.':'情态动词'}
 FORM = {'s':'复数','p':'过去式','d':'过去分词','i':'现在分词',
         '3':'第三人称单数','r':'比较级','t':'最高级'}
+def inflected_candidates(original, kind):
+    # A noun sense cannot become a past-tense verb (wind -> wound -> 风),
+    # and a verb sense cannot become a plural noun. Comparatives require their
+    # own attested translation: good -> better must not output unchanged 好.
+    if kind in ('r','t'):return []
+    part='名词' if kind=='s' else '动词'
+    excluded=original.get('inflection_exclusions',{}).get(kind,[])
+    return [candidate for candidate in original['candidates'] if part in candidate[1] and candidate[0] not in excluded]
 def rank(row):
     values = [int(row.get(k) or 0) for k in ('frq','bnc')]
     return min([n for n in values if n > 0] or [1000000])
@@ -43,11 +51,14 @@ def candidates(translation):
     return result
 
 def main():
-    rows={}
+    rows={}; comparisons={}
     with SOURCE.open(encoding='utf-8-sig',newline='') as f:
         for row in csv.DictReader(f):
             word=row['word'].lower()
             if not TOKEN.fullmatch(word) or len(word)>48:continue
+            exchange=dict(x.split(':',1) for x in row.get('exchange','').split('/') if ':' in x)
+            if exchange.get('0') and any(x in exchange.get('1','') for x in ('r','t')):
+                if word not in comparisons or row['word']==word:comparisons[word]=row
             if not (rank(row)<=30000 or row.get('tag') or int(row.get('collins') or 0)>0 or row.get('oxford')=='1'):continue
             # Prefer the actual lowercase entry over a proper-name collision.
             if word not in rows or row['word']==word:rows[word]=row
@@ -61,8 +72,19 @@ def main():
         source=rows.get(word,{})
         entries[word]={'word':word,'ipa':previous.get('ipa',source.get('phonetic','')),
                        'root':'','form':'','rank':previous.get('rank',value.get('rank',2000)),
-                       'candidates':[tuple(x) for x in value['candidates']]}
+                       'candidates':[tuple(x) for x in value.get('candidates',previous.get('candidates',[]))],
+                       'inflection_exclusions':value.get('inflection_exclusions',{})}
     derived=0
+    # Comparative records without frequency tags are still genuine forms of
+    # accepted base words; use their source meanings instead of inventing them.
+    for word,row in sorted(comparisons.items()):
+        fields=dict(x.split(':',1) for x in row.get('exchange','').split('/') if ':' in x)
+        base=fields['0'].lower(); cs=candidates(row['translation'])
+        if word not in entries and base in entries and cs:
+            entries[word]={'word':word,'ipa':row['phonetic'],'root':base,
+                           'form':'／'.join(FORM[x] for x in fields['1'] if x in ('r','t')),
+                           'rank':entries[base]['rank']+100,'candidates':cs}
+            derived+=1
     for base,row in sorted(rows.items()):
         if base not in entries:continue
         original=entries[base]
@@ -70,15 +92,17 @@ def main():
             if ':' not in exchange:continue
             kind,word=exchange.split(':',1);word=word.lower()
             if kind not in FORM or word==base or not TOKEN.fullmatch(word):continue
+            cs=inflected_candidates(original,kind)
             if word not in entries:
+                if not cs:continue
                 entries[word]={'word':word,'ipa':rows.get(word,{}).get('phonetic',''),
                                'root':base,'form':FORM[kind],'rank':original['rank']+100,
-                               'candidates':list(original['candidates'])}
+                               'candidates':list(cs)}
                 derived+=1
             else:
                 e=entries[word]
                 # Exact meanings remain first, so saw retains its noun senses.
-                for candidate in original['candidates']:
+                for candidate in cs:
                     if candidate not in e['candidates']:e['candidates'].append(candidate)
                 if not e['root']:e['root']=base;e['form']=FORM[kind]
                 elif e['root']==base and FORM[kind] not in e['form']:e['form']+='／'+FORM[kind]
@@ -88,16 +112,33 @@ def main():
         base=fields.get('0','').lower()
         if base==word or base not in entries:continue
         if word not in entries:
+            cs=[]
+            for kind in fields.get('1',''):
+                if kind in FORM:
+                    for candidate in inflected_candidates(entries[base],kind):
+                        if candidate not in cs:cs.append(candidate)
+            if not cs:continue
             entries[word]={'word':word,'ipa':row['phonetic'],'root':base,
                            'form':'／'.join(FORM[x] for x in fields.get('1','') if x in FORM),
-                           'rank':entries[base]['rank']+100,'candidates':list(entries[base]['candidates'])}
+                           'rank':entries[base]['rank']+100,'candidates':cs}
             derived+=1
     # Reviewed everyday roots also define the primary candidates for their forms.
     # This prevents noisy legacy entries such as books -> 书评 from leading input.
     for word,e in entries.items():
-        if word not in overrides and e['root'] in overrides:
-            e['candidates']=list(entries[e['root']]['candidates'])
+        if word not in overrides and e['root'] in overrides and e['form'] not in (FORM['r'],FORM['t']):
+            cs=[]
+            for kind in FORM:
+                if FORM[kind] in e['form']:
+                    for candidate in inflected_candidates(entries[e['root']],kind):
+                        if candidate not in cs:cs.append(candidate)
+            # Reviewed roots lead inflected candidates; genuine direct meanings
+            # (e.g. running -> 运转) remain available rather than being discarded.
+            e['candidates']=cs+[candidate for candidate in e['candidates'] if candidate not in cs]
             e['rank']=min(e['rank'],entries[e['root']]['rank']+100)
+    # Explicit reviewed forms take precedence over ambiguous legacy exchanges.
+    # Keep metadata, but do not reintroduce rejected senses through root merging.
+    for word,value in overrides.items():
+        if 'candidates' in value:entries[word]['candidates']=list(dict.fromkeys(tuple(x) for x in value['candidates']))
     # Fetch existing IPA for derived forms even if that source record had no
     # frequency/exam tags. Missing IPA remains empty; it is never guessed.
     with SOURCE.open(encoding='utf-8-sig',newline='') as f:
@@ -112,7 +153,7 @@ def main():
             for chinese,pos in e['candidates']:
                 fields=[word,e['ipa'],e['root'],e['form'],str(e['rank']),chinese,pos]
                 f.write('\t'.join(x.replace('\t',' ').replace('\n',' ') for x in fields)+'\n')
-    manifest={'version':'1.0.0','source':'https://github.com/skywind3000/ECDICT',
+    manifest={'version':'1.0.1','source':'https://github.com/skywind3000/ECDICT',
               'source_sha256':hashlib.sha256(SOURCE.read_bytes()).hexdigest(),
               'entry_count':len(entries),'derived_entry_count':derived,
               'candidate_count':sum(len(x['candidates']) for x in entries.values()),

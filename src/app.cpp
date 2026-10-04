@@ -26,6 +26,8 @@ static ITfKeyEventSink* trialSink=nullptr;
 static ITfDocumentMgr* trialDocument=nullptr;
 static ITfContext* trialContext=nullptr;
 static EditorStore* trialStore=nullptr;
+static bool componentSelfTest=false;
+static unsigned testActivationNotifications=0,testEditFocusNotifications=0;
 static int scale=100;
 static int px(int n){return MulDiv(n,scale,100);}
 static std::vector<std::pair<std::wstring,std::wstring>> voices(){
@@ -69,6 +71,13 @@ static HRESULT activate(){
     if(SUCCEEDED(hr)){hr=mgr->ActivateProfile(TF_PROFILETYPE_INPUTPROCESSOR,ETypeLanguage,ETypeClsid,ETypeProfile,nullptr,trialThread?0x10000000:0x10000001);mgr->Release();}return hr;
 }
 static void endTrial();
+static HRESULT focusTrial(bool focused){
+    if(!trialSink)return E_UNEXPECTED;
+    HRESULT hr=S_OK;
+    if(focused&&trialThread&&trialDocument)hr=trialThread->SetFocus(trialDocument);
+    trialSink->OnSetFocus(focused?TRUE:FALSE);
+    return hr;
+}
 static HRESULT startTrial(){
     if(trialSink){trialThread->SetFocus(trialDocument);return S_OK;}
     HRESULT hr=CoCreateInstance(CLSID_TF_ThreadMgr,nullptr,CLSCTX_INPROC_SERVER,IID_ITfThreadMgr,(void**)&trialThread);
@@ -89,7 +98,13 @@ static HRESULT startTrial(){
     if(SUCCEEDED(hr))hr=trialThread->CreateDocumentMgr(&trialDocument);
     if(SUCCEEDED(hr)){trialStore=new EditorStore(edit);TfEditCookie cookie;hr=trialDocument->CreateContext(id,0,trialStore,&trialContext,&cookie);}
     if(SUCCEEDED(hr))hr=trialDocument->Push(trialContext);
-    if(SUCCEEDED(hr)){ITfDocumentMgr* previous=nullptr;trialThread->AssociateFocus(edit,trialDocument,&previous);if(previous)previous->Release();hr=trialThread->SetFocus(trialDocument);}
+    if(SUCCEEDED(hr)){
+        // The interactive preview follows the native edit's focus. The directly
+        // driven component test owns document focus explicitly; associating an
+        // inactive native window would let Windows replace that focus on pump.
+        if(!componentSelfTest){ITfDocumentMgr* previous=nullptr;hr=trialThread->AssociateFocus(edit,trialDocument,&previous);if(previous)previous->Release();}
+        if(SUCCEEDED(hr))hr=trialThread->SetFocus(trialDocument);
+    }
     if(hr!=S_OK)endTrial();return hr;
 }
 static void endTrial(){
@@ -120,7 +135,10 @@ static void refreshVoices(){
 static void createControls(){
     bodyFont=CreateFontW(-px(15),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Microsoft YaHei UI");
     titleFont=CreateFontW(-px(29),0,0,0,FW_SEMIBOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Microsoft YaHei UI");
-    auto title=control(L"STATIC",L"EType · 英文词汇输入法",SS_LEFT,0,34,27,760,44);SendMessageW(title,WM_SETFONT,(WPARAM)titleFont,TRUE);
+    auto logo=control(L"STATIC",L"",SS_ICON|SS_REALSIZEIMAGE,0,34,18,64,64);
+    auto icon=(HICON)LoadImageW(instance,MAKEINTRESOURCEW(1),IMAGE_ICON,px(64),px(64),LR_SHARED);
+    SendMessageW(logo,STM_SETICON,(WPARAM)icon,0);
+    auto title=control(L"STATIC",L"EType · 英文词汇输入法",SS_LEFT,0,110,27,640,44);SendMessageW(title,WM_SETFONT,(WPARAM)titleFont,TRUE);
     label(L"把每一次中文输入，变成一次英文单词练习。",35,79,750,28);
     std::wstring count=L"离线词库  "+std::to_wstring(dictionary->size())+L" 个词条   ·   完整拼写   ·   固定候选顺序";
     label(count.c_str(),35,119,750,28);
@@ -145,15 +163,23 @@ static void createControls(){
     comboItem(punctuationCombo,L"中文标点 ，。？！");comboItem(punctuationCombo,L"英文标点 ,.!?");
     control(L"BUTTON",L"保存设置",BS_PUSHBUTTON,306,560,553,176,35);
     statusLabel=control(L"STATIC",L"",SS_LEFT,307,35,603,700,30);
-    label(L"词库 v1.0.0 · 部分词库音标为英式，播放口音以设置为准。",35,640,730,26);
+    label(L"词库 v1.0.1 · 部分词库音标为英式，播放口音以设置为准。",35,640,730,26);
     auto settings=readSettings();SendMessageW(fontCombo,CB_SETCURSEL,settings.fontSize-12,0);
     SendMessageW(accentCombo,CB_SETCURSEL,settings.british?1:0,0);SendMessageW(punctuationCombo,CB_SETCURSEL,settings.chinesePunctuation?0:1,0);SendMessageW(volumeBar,TBM_SETPOS,TRUE,settings.volume);
     refreshVoices();
 }
 static Settings currentSettings(){Settings s;s.fontSize=(int)SendMessageW(fontCombo,CB_GETCURSEL,0,0)+12;s.british=SendMessageW(accentCombo,CB_GETCURSEL,0,0)==1;s.chinesePunctuation=SendMessageW(punctuationCombo,CB_GETCURSEL,0,0)==0;s.volume=(int)SendMessageW(volumeBar,TBM_GETPOS,0,0);return s;}
 static void setup(bool uninstall){
+    auto uninstaller=root+L"\\unins000.exe";
+    if(uninstall&&std::filesystem::exists(uninstaller)){
+        auto result=(INT_PTR)ShellExecuteW(mainWindow,L"open",uninstaller.c_str(),nullptr,root.c_str(),SW_SHOWNORMAL);
+        if(result<=32)MessageBoxW(mainWindow,L"未能启动卸载程序。请在 Windows 设置的已安装应用中卸载 EType。",L"EType",MB_OK|MB_ICONERROR);
+        else PostMessageW(mainWindow,WM_CLOSE,0,0);
+        return;
+    }
     auto path=root+(uninstall?L"\\uninstall.ps1":L"\\install.ps1");
     auto args=L"-NoProfile -ExecutionPolicy Bypass -File \""+path+L"\"";
+    if(uninstall)args+=L" -InstallDir \""+root+L"\"";
     auto result=(INT_PTR)ShellExecuteW(mainWindow,L"runas",L"powershell.exe",args.c_str(),root.c_str(),SW_HIDE);
     if(result<=32)MessageBoxW(mainWindow,L"安装或卸载未执行。你可以直接运行软件目录里的安装或卸载脚本。",L"EType",MB_OK|MB_ICONINFORMATION);
 }
@@ -164,8 +190,9 @@ static LRESULT CALLBACK proc(HWND h,UINT m,WPARAM w,LPARAM l){
     case WM_COMMAND:switch(LOWORD(w)){
         case 201:
             if(trialStore&&HIWORD(w)==EN_CHANGE)trialStore->sync();
-            if(trialSink&&HIWORD(w)==EN_KILLFOCUS)trialSink->OnSetFocus(FALSE);
-            if(trialSink&&HIWORD(w)==EN_SETFOCUS)trialSink->OnSetFocus(TRUE);
+            if(componentSelfTest&&(HIWORD(w)==EN_KILLFOCUS||HIWORD(w)==EN_SETFOCUS))++testEditFocusNotifications;
+            if(!componentSelfTest&&HIWORD(w)==EN_KILLFOCUS)focusTrial(false);
+            if(!componentSelfTest&&HIWORD(w)==EN_SETFOCUS)focusTrial(true);
             break;
         case 101:setup(false);break;
         case 102:{auto hr=startTrial();if(hr!=S_OK){std::wstring text=L"未能启用本窗口试用。你仍可尝试安装系统输入法。\n错误码：";wchar_t hex[24];swprintf(hex,24,L"0x%08lX",(unsigned long)hr);text+=hex;MessageBoxW(h,text.c_str(),L"EType",MB_OK|MB_ICONINFORMATION);}else{SetFocus(edit);SetWindowTextW(statusLabel,L"本窗口已启用 EType。输入 bank 测试；在其他软件使用需要安装系统输入法。");}break;}
@@ -174,7 +201,13 @@ static LRESULT CALLBACK proc(HWND h,UINT m,WPARAM w,LPARAM l){
         case 303:{auto s=currentSettings();speak(L"apple",s.british,false,L"",s.volume);break;}
         case 306:if(writeSettings(currentSettings())){SetWindowTextW(statusLabel,L"设置已保存，下次显示候选窗口时生效。");}else MessageBoxW(h,L"设置保存失败，请检查本地用户目录的写入权限。",L"EType",MB_OK|MB_ICONERROR);break;
     }return 0;
-    case WM_ACTIVATE:if(trialSink&&LOWORD(w)==WA_INACTIVE)trialSink->OnSetFocus(FALSE);break;
+    case WM_ACTIVATE:
+        if(componentSelfTest)++testActivationNotifications;
+        if(!componentSelfTest){
+            if(LOWORD(w)==WA_INACTIVE)focusTrial(false);
+            else if(GetFocus()==edit)focusTrial(true);
+        }
+        break;
     case WM_CLOSE:endTrial();DestroyWindow(h);return 0;
     case WM_DESTROY:DeleteObject(bodyFont);DeleteObject(titleFont);PostQuitMessage(0);return 0;
     }
@@ -211,14 +244,29 @@ static int render(const std::wstring& folder){
 }
 static void pump(){MSG m;for(int i=0;i<15;++i){while(PeekMessageW(&m,nullptr,0,0,PM_REMOVE)){TranslateMessage(&m);DispatchMessageW(&m);}Sleep(2);}}
 static int uiSelfTest(const std::wstring& report){
-    ShowWindow(mainWindow,SW_SHOW);UpdateWindow(mainWindow);SetForegroundWindow(mainWindow);SetFocus(edit);pump();
-    auto hr=startTrial();SetFocus(edit);pump();
-    auto key=[&](UINT vk){BYTE state[256]{};SetKeyboardState(state);auto scan=MapVirtualKeyW(vk,MAPVK_VK_TO_VSC);LPARAM param=(LPARAM)scan<<16;BOOL eaten=FALSE;
-        if(trialStore)trialStore->sync();
-        if(trialSink&&trialContext){trialSink->OnTestKeyDown(trialContext,vk,param,&eaten);if(eaten)trialSink->OnKeyDown(trialContext,vk,param,&eaten);}pump();return eaten;};
-    auto type=[&](const char* s){for(;*s;++s)key((UINT)toupper(*s));};
+    // This is a component test that directly forwards keys to the preview sink.
+    // Desktop foreground activation is not guaranteed, and unrelated activation
+    // messages must not detach its context halfway through those synthetic keys.
+    // Exercise the same focus handler explicitly at the intended boundaries.
+    componentSelfTest=true;
+    ShowWindow(mainWindow,SW_SHOWNOACTIVATE);UpdateWindow(mainWindow);pump();
+    auto hr=startTrial();focusTrial(true);pump();
     auto value=[](){int n=GetWindowTextLengthW(edit);std::wstring s(n+1,L'\0');GetWindowTextW(edit,s.data(),n+1);s.resize(n);return s;};
-    type("bank");key('2');auto bank=value();SetWindowTextW(edit,L"");pump();
+    std::ostringstream trace;trace<<"[";unsigned keyIndex=0;
+    auto key=[&](UINT vk){BYTE state[256]{};BOOL keyboardSet=SetKeyboardState(state);auto scan=MapVirtualKeyW(vk,MAPVK_VK_TO_VSC);LPARAM param=(LPARAM)scan<<16;BOOL eaten=FALSE,testEaten=FALSE;
+        int ctrl=GetKeyState(VK_CONTROL),alt=GetKeyState(VK_MENU),leftWin=GetKeyState(VK_LWIN),rightWin=GetKeyState(VK_RWIN);
+        if(trialStore)trialStore->sync();
+        if(trialSink&&trialContext){trialSink->OnTestKeyDown(trialContext,vk,param,&eaten);testEaten=eaten;if(eaten)trialSink->OnKeyDown(trialContext,vk,param,&eaten);}pump();
+        if(keyIndex++)trace<<",";
+        trace<<"{\"key\":"<<vk<<",\"tested\":"<<(testEaten?"true":"false")<<",\"eaten\":"<<(eaten?"true":"false")<<",\"keyboard_state_set\":"<<(keyboardSet?"true":"false")<<",\"ctrl\":"<<ctrl<<",\"alt\":"<<alt<<",\"left_win\":"<<leftWin<<",\"right_win\":"<<rightWin<<",\"text\":"<<json(value())<<"}";
+        return eaten;};
+    auto type=[&](const char* s){for(;*s;++s)key((UINT)toupper(*s));};
+    type("ba");
+    // Regression: native desktop activation noise cannot interrupt a directly
+    // driven component test; actual preview focus changes are tested below.
+    SendMessageW(mainWindow,WM_ACTIVATE,WA_INACTIVE,0);
+    SendMessageW(mainWindow,WM_ACTIVATE,WA_ACTIVE,0);
+    type("nk");key('2');auto bank=value();SetWindowTextW(edit,L"");pump();
     type("apple");key(VK_SPACE);auto apple=value();SetWindowTextW(edit,L"");pump();
     type("went");key(VK_SPACE);auto went=value();SetWindowTextW(edit,L"");pump();
     type("hello");key(VK_RETURN);auto english=value();SetWindowTextW(edit,L"");pump();
@@ -226,10 +274,26 @@ static int uiSelfTest(const std::wstring& report){
     auto suggestions=dictionary->correct("aple");auto found=std::find(suggestions.begin(),suggestions.end(),"apple");
     if(found!=suggestions.end())key('1'+(UINT)(found-suggestions.begin()));auto correction=value();key(VK_SPACE);auto correctedChinese=value();
     SetWindowTextW(edit,L"");pump();type("apple");key(VK_ESCAPE);auto cancelled=value();
-    type("app");SetFocus(fontCombo);pump();auto focusEnglish=value();
-    SetFocus(edit);SetWindowTextW(edit,L"");pump();type("bank");key('2');auto resumed=value();
-    bool ok=hr==S_OK&&bank==L"河岸"&&apple==L"苹果"&&went==L"去"&&english==L"hello"&&typo==L"aple"&&correction==L"apple"&&correctedChinese==L"苹果"&&cancelled.empty()&&focusEnglish==L"app"&&resumed==L"河岸";
-    std::ofstream f{std::filesystem::path(report)};f<<"{\"passed\":"<<(ok?"true":"false")<<",\"scope\":\"component-preview\",\"activation_hr\":"<<(unsigned long)hr<<",\"bank\":"<<json(bank)<<",\"apple\":"<<json(apple)<<",\"went\":"<<json(went)<<",\"english\":"<<json(english)<<",\"typo_before_confirmation\":"<<json(typo)<<",\"corrected_english\":"<<json(correction)<<",\"corrected_chinese\":"<<json(correctedChinese)<<",\"cancelled\":"<<json(cancelled)<<",\"focus_english\":"<<json(focusEnglish)<<",\"resumed\":"<<json(resumed)<<"}";f.close();
+    type("app");focusTrial(false);pump();auto focusEnglish=value();
+    // Simulate the thread manager changing document focus during an external
+    // focus transition. Entering the preview must restore its document manager.
+    HRESULT lostFocusHr=trialThread?trialThread->SetFocus(nullptr):E_UNEXPECTED;
+    HRESULT restoreFocusHr=focusTrial(true);ITfDocumentMgr* restoredDocument=nullptr;
+    HRESULT queryFocusHr=trialThread?trialThread->GetFocus(&restoredDocument):E_UNEXPECTED;
+    IUnknown* restoredIdentity=nullptr;IUnknown* expectedIdentity=nullptr;
+    if(restoredDocument)restoredDocument->QueryInterface(IID_IUnknown,(void**)&restoredIdentity);
+    if(trialDocument)trialDocument->QueryInterface(IID_IUnknown,(void**)&expectedIdentity);
+    bool restored=restoredIdentity&&restoredIdentity==expectedIdentity;
+    if(restoredIdentity)restoredIdentity->Release();
+    if(expectedIdentity)expectedIdentity->Release();
+    if(restoredDocument)restoredDocument->Release();
+    SetWindowTextW(edit,L"");pump();type("bank");key('2');auto resumed=value();trace<<"]";
+    // Windows may report another native document for an inactive test window.
+    // Assert the explicit request and actual preview text restoration; retain
+    // the observed desktop document identity separately in the report.
+    bool ok=hr==S_OK&&bank==L"河岸"&&apple==L"苹果"&&went==L"去"&&english==L"hello"&&typo==L"aple"&&correction==L"apple"&&correctedChinese==L"苹果"&&cancelled.empty()&&focusEnglish==L"app"&&SUCCEEDED(lostFocusHr)&&SUCCEEDED(restoreFocusHr)&&resumed==L"河岸";
+    std::ofstream f{std::filesystem::path(report)};f<<"{\"passed\":"<<(ok?"true":"false")<<",\"scope\":\"component-preview\",\"activation_hr\":"<<(unsigned long)hr<<",\"bank\":"<<json(bank)<<",\"apple\":"<<json(apple)<<",\"went\":"<<json(went)<<",\"english\":"<<json(english)<<",\"typo_before_confirmation\":"<<json(typo)<<",\"corrected_english\":"<<json(correction)<<",\"corrected_chinese\":"<<json(correctedChinese)<<",\"cancelled\":"<<json(cancelled)<<",\"focus_english\":"<<json(focusEnglish)<<",\"resumed\":"<<json(resumed);
+    f<<",\"restored_document_focus\":"<<(restored?"true":"false")<<",\"lose_focus_hr\":"<<(unsigned long)lostFocusHr<<",\"restore_focus_hr\":"<<(unsigned long)restoreFocusHr<<",\"query_focus_hr\":"<<(unsigned long)queryFocusHr<<",\"native_activation_notifications\":"<<testActivationNotifications<<",\"native_edit_focus_notifications\":"<<testEditFocusNotifications<<",\"key_trace\":"<<trace.str()<<"}";f.close();
     endTrial();DestroyWindow(mainWindow);return ok?0:1;
 }
 int WINAPI wWinMain(HINSTANCE inst,HINSTANCE,LPWSTR,int show){

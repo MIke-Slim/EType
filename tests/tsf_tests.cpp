@@ -31,10 +31,11 @@ public:
 class Store final:public ITextStoreACP {
     LONG refs_=1;DWORD lock_=0;ITextStoreACPSink* sink_=nullptr;
 public:
-    std::wstring value;LONG start=0,end=0;bool readOnly=false;HWND window;
+    std::wstring value;LONG start=0,end=0;bool readOnly=false,deferLocks=false;DWORD queuedLock=0;HWND window;
     Store(){window=CreateWindowExW(0,L"STATIC",L"EType integration test",WS_OVERLAPPED,0,0,640,480,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);}
     ~Store(){drop(sink_);DestroyWindow(window);}
     void clear(){LONG old=(LONG)value.size();value.clear();start=end=0;if(sink_){TS_TEXTCHANGE c{0,old,0};sink_->OnTextChange(0,&c);sink_->OnSelectionChange();}}
+    void flushLock(){deferLocks=false;if(queuedLock&&sink_){auto flags=queuedLock;queuedLock=0;lock_=flags;sink_->OnLockGranted(flags);lock_=0;}}
     STDMETHODIMP QueryInterface(REFIID id,void** p)override{if(!p)return E_POINTER;*p=nullptr;if(id==IID_IUnknown||id==IID_ITextStoreACP){*p=static_cast<ITextStoreACP*>(this);AddRef();return S_OK;}return E_NOINTERFACE;}
     STDMETHODIMP_(ULONG) AddRef()override{return InterlockedIncrement(&refs_);}
     STDMETHODIMP_(ULONG) Release()override{auto r=InterlockedDecrement(&refs_);if(!r)delete this;return r;}
@@ -42,6 +43,7 @@ public:
     STDMETHODIMP UnadviseSink(IUnknown*)override{drop(sink_);return S_OK;}
     STDMETHODIMP RequestLock(DWORD flags,HRESULT* session)override{
         if(!sink_){*session=E_UNEXPECTED;return E_UNEXPECTED;}
+        if(deferLocks){if(flags&TS_LF_SYNC)*session=TS_E_SYNCHRONOUS;else{queuedLock=flags;*session=TS_S_ASYNC;}return S_OK;}
         if(lock_){*session=TS_E_SYNCHRONOUS;return S_OK;}
         lock_=flags;*session=sink_->OnLockGranted(flags);lock_=0;return S_OK;
     }
@@ -97,6 +99,9 @@ static bool key(ITfKeyEventSink* sink,ITfContext* context,UINT vk,bool shift=fal
 static void word(ITfKeyEventSink* sink,ITfContext* c,const char* text){for(;*text;++text)check(key(sink,c,(UINT)toupper(*text)),"letter handled via TSF sink");}
 int wmain(int argc,wchar_t** argv){
     if(argc!=2)return 2;SetEnvironmentVariableW(L"ETYPE_HEADLESS_TEST",L"1");CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
+    auto settingsPath=(std::filesystem::absolute(argv[1]).parent_path().parent_path().parent_path()/(L"tsf-test-settings-"+std::to_wstring(GetCurrentProcessId())+L".ini")).wstring();
+    SetEnvironmentVariableW(L"ETYPE_TEST_SETTINGS",settingsPath.c_str());
+    WritePrivateProfileStringW(L"EType",L"ChinesePunctuation",L"1",settingsPath.c_str());
     auto dll=LoadLibraryW(argv[1]);check(dll!=nullptr,"native DLL loads without external runtime");if(!dll)return 2;
     using FactoryFn=HRESULT(WINAPI*)(REFCLSID,REFIID,void**);auto factoryFn=(FactoryFn)GetProcAddress(dll,"DllGetClassObject");check(factoryFn!=nullptr,"COM export available");if(!factoryFn)return 2;
     IClassFactory* factory=nullptr;check(SUCCEEDED(factoryFn(ETypeClsid,IID_IClassFactory,(void**)&factory)),"COM factory created");
@@ -130,9 +135,24 @@ int wmain(int argc,wchar_t** argv){
     store->clear();word(sink,context,"bank");sink->OnSetFocus(FALSE);pump();check(store->value==L"bank","focus exit retains English in old text store");
     store->clear();store->readOnly=true;check(!key(sink,context,'A'),"read-only host passes key through");check(store->value.empty(),"read-only text untouched");store->readOnly=false;
     sink->OnSetFocus(TRUE);key(sink,context,VK_SHIFT);check(!key(sink,context,'A'),"English mode passes letters through");key(sink,context,VK_SHIFT);check(key(sink,context,'A'),"Shift restores translation mode");key(sink,context,VK_ESCAPE);
+    store->clear();WritePrivateProfileStringW(L"EType",L"ChinesePunctuation",L"0",settingsPath.c_str());
+    check(!key(sink,context,VK_OEM_COMMA),"first punctuation respects newly saved English punctuation setting");
+    WritePrivateProfileStringW(L"EType",L"ChinesePunctuation",L"1",settingsPath.c_str());
+    check(key(sink,context,VK_OEM_COMMA),"first punctuation respects newly saved Chinese punctuation setting");
+    check(store->value==L"，","new punctuation setting applies without an intervening letter");
+    // Real TSF async locks must not redirect old keystrokes into a newly focused host.
+    store->clear();store->deferLocks=true;check(key(sink,context,'A'),"old-context key queued asynchronously");
+    sink->OnSetFocus(FALSE);
+    ITfDocumentMgr* secondDocument=nullptr;mgr->CreateDocumentMgr(&secondDocument);auto secondStore=new Store;
+    ITfContext* secondContext=nullptr;TfEditCookie secondCookie=0;secondDocument->CreateContext(client,0,secondStore,&secondContext,&secondCookie);secondDocument->Push(secondContext);mgr->SetFocus(secondDocument);
+    word(sink,secondContext,"bank");store->flushLock();pump();
+    check(store->value.empty(),"cancelled deferred key leaves old document untouched");
+    check(secondStore->value==L"bank","old async callback leaves new composition untouched");
+    key(sink,secondContext,VK_SPACE);check(secondStore->value==L"银行","old async callback leaves new engine buffer untouched");
+    sink->OnSetFocus(FALSE);mgr->SetFocus(document);secondDocument->Pop(TF_POPF_ALL);drop(secondContext);drop(secondDocument);secondStore->Release();
     profiles->DeactivateProfile(TF_PROFILETYPE_INPUTPROCESSOR,ETypeLanguage,ETypeClsid,ETypeProfile,nullptr,0x10000000);drop(profiles);
     drop(sink);drop(service);mgr->SetFocus(nullptr);document->Pop(TF_POPF_ALL);drop(context);drop(document);store->Release();mgr->Deactivate();drop(mgr);pump();
     CoRevokeClassObject(registrationCookie);capture->Release();
     using UnloadFn=HRESULT(WINAPI*)();auto canUnload=(UnloadFn)GetProcAddress(dll,"DllCanUnloadNow");check(canUnload&&canUnload()==S_OK,"service and edit sessions release cleanly");
-    FreeLibrary(dll);CoUninitialize();std::cout<<"tsf_checks="<<checks<<" failures="<<failures<<"\n";return failures?1:0;
+    FreeLibrary(dll);CoUninitialize();DeleteFileW(settingsPath.c_str());std::cout<<"tsf_checks="<<checks<<" failures="<<failures<<"\n";return failures?1:0;
 }

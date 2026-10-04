@@ -1,0 +1,653 @@
+{
+    "version":  "0.1.1",
+    "installer_sha256":  "0bb3d7ef0984615d714a05d642169321afb00307484a04554b550adb4c1f49c1",
+    "bytes":  5394867,
+    "file_version":  "0.1.1.0             ",
+    "signature":  "NotSigned",
+    "installer_checks":  [
+                             {
+                                 "name":  "reject_nonempty_foreign_directory",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "foreign_user_file_unchanged",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "reject_nocancel_that_disables_failure_rollback",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "nocancel_rejection_copies_no_payload",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "injected_failure_aborts_installation",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "failure_was_injected_after_actual_file_copy",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "failure_enters_installer_rollback",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "rollback_removes_copied_payload_and_marker",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "rollback_leaves_no_application_record",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "install_custom_chinese_space_metacharacter_path",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "registry_records_selected_path",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "installed_payload_matches_every_manifest_hash",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "uninstaller_placed_in_selected_directory",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "legacy_path_validation_install.ps1",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "legacy_path_validation_uninstall.ps1",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "actual_preview_runs_from_custom_path",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "reject_relocation_of_existing_installation",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "relocation_rejection_preserves_original_installation",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "reject_unsupported_overwrite_upgrade",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "upgrade_rejection_preserves_dll_bytes",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "upgrade_rejection_preserves_user_added_file",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "reject_uninstall_while_component_is_locked",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "locked_uninstall_preserves_payload_and_installation_record",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "reject_uninstall_without_correct_marker",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "failed_uninstall_preserves_executable",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "uninstall_from_chosen_directory",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "uninstall_removes_all_owned_payload",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "uninstall_preserves_user_added_file",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "uninstall_removes_private_application_record",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "reinstall_at_new_path_after_uninstall",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "second_uninstall_completes",
+                                 "passed":  true
+                             },
+                             {
+                                 "name":  "global_etype_registration_unchanged",
+                                 "passed":  true
+                             }
+                         ],
+    "installer_source_sha256":  "f260a15de34ed5b86fac87f8855514113c99e20d38c2ee10aa6ae22c47d59631",
+    "package_manifest_sha256":  "79f03eb937c7f820a218c2637754870c17569980296d3c62376718926e25c0f6",
+    "tested_scope":  "core, x64/x86 TSF components, preview, isolated installer lifecycle",
+    "production_global_install_verified":  false,
+    "build_evidence":  {
+                           "passed":  true,
+                           "version":  "0.1.1",
+                           "files":  {
+                                         "EType.exe":  "298d4c30a21318090c808f7c3df3e108a6e569c72ef9bb2212d821ecf7cea3d2",
+                                         "x64/EType.dll":  "114a01e4ec31c67c95f863a5f9a895ba33df11a5d5595d4b0aeeca778838956f",
+                                         "x86/EType.dll":  "546c173180a1d1a633fe89afc0f270c2722475df9ec52b025801e758f6a9198f",
+                                         "data/dictionary.tsv":  "565957be38cb8b1e5bd4107dc1bbd926c9d9a53ac130c707916d5aa541fd07c7",
+                                         "data/manifest.json":  "5a95d7a26e4e24f4916dcc00e35ea79d270535264cda7dd7a089c7ed93f5625f"
+                                     },
+                           "results":  {
+                                           "core-test-results.txt":  "checks=64 failures=0 entries=55081 load_ms=171 correction_average_ms=12",
+                                           "tsf-test-results.txt":  "activation_hr=0x0\r\ntsf_checks=73 failures=0",
+                                           "tsf-test-results-x86.txt":  "activation_hr=0x0\r\ntsf_checks=73 failures=0"
+                                       },
+                           "ui_selftest":  {
+                                               "passed":  true,
+                                               "scope":  "component-preview",
+                                               "activation_hr":  0,
+                                               "bank":  "河岸",
+                                               "apple":  "苹果",
+                                               "went":  "去",
+                                               "english":  "hello",
+                                               "typo_before_confirmation":  "aple",
+                                               "corrected_english":  "apple",
+                                               "corrected_chinese":  "苹果",
+                                               "cancelled":  "",
+                                               "focus_english":  "app",
+                                               "resumed":  "河岸",
+                                               "restored_document_focus":  true,
+                                               "lose_focus_hr":  0,
+                                               "restore_focus_hr":  0,
+                                               "query_focus_hr":  0,
+                                               "native_activation_notifications":  3,
+                                               "native_edit_focus_notifications":  0,
+                                               "key_trace":  [
+                                                                 {
+                                                                     "key":  66,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "b"
+                                                                 },
+                                                                 {
+                                                                     "key":  65,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "ba"
+                                                                 },
+                                                                 {
+                                                                     "key":  78,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "ban"
+                                                                 },
+                                                                 {
+                                                                     "key":  75,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "bank"
+                                                                 },
+                                                                 {
+                                                                     "key":  50,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "河岸"
+                                                                 },
+                                                                 {
+                                                                     "key":  65,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "a"
+                                                                 },
+                                                                 {
+                                                                     "key":  80,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "ap"
+                                                                 },
+                                                                 {
+                                                                     "key":  80,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "app"
+                                                                 },
+                                                                 {
+                                                                     "key":  76,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "appl"
+                                                                 },
+                                                                 {
+                                                                     "key":  69,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "apple"
+                                                                 },
+                                                                 {
+                                                                     "key":  32,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "苹果"
+                                                                 },
+                                                                 {
+                                                                     "key":  87,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "w"
+                                                                 },
+                                                                 {
+                                                                     "key":  69,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "we"
+                                                                 },
+                                                                 {
+                                                                     "key":  78,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "wen"
+                                                                 },
+                                                                 {
+                                                                     "key":  84,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "went"
+                                                                 },
+                                                                 {
+                                                                     "key":  32,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "去"
+                                                                 },
+                                                                 {
+                                                                     "key":  72,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "h"
+                                                                 },
+                                                                 {
+                                                                     "key":  69,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "he"
+                                                                 },
+                                                                 {
+                                                                     "key":  76,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "hel"
+                                                                 },
+                                                                 {
+                                                                     "key":  76,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "hell"
+                                                                 },
+                                                                 {
+                                                                     "key":  79,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "hello"
+                                                                 },
+                                                                 {
+                                                                     "key":  13,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "hello"
+                                                                 },
+                                                                 {
+                                                                     "key":  65,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "a"
+                                                                 },
+                                                                 {
+                                                                     "key":  80,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "ap"
+                                                                 },
+                                                                 {
+                                                                     "key":  76,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "apl"
+                                                                 },
+                                                                 {
+                                                                     "key":  69,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "aple"
+                                                                 },
+                                                                 {
+                                                                     "key":  32,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "aple"
+                                                                 },
+                                                                 {
+                                                                     "key":  51,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "apple"
+                                                                 },
+                                                                 {
+                                                                     "key":  32,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "苹果"
+                                                                 },
+                                                                 {
+                                                                     "key":  65,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "a"
+                                                                 },
+                                                                 {
+                                                                     "key":  80,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "ap"
+                                                                 },
+                                                                 {
+                                                                     "key":  80,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "app"
+                                                                 },
+                                                                 {
+                                                                     "key":  76,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "appl"
+                                                                 },
+                                                                 {
+                                                                     "key":  69,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "apple"
+                                                                 },
+                                                                 {
+                                                                     "key":  27,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  ""
+                                                                 },
+                                                                 {
+                                                                     "key":  65,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "a"
+                                                                 },
+                                                                 {
+                                                                     "key":  80,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "ap"
+                                                                 },
+                                                                 {
+                                                                     "key":  80,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "app"
+                                                                 },
+                                                                 {
+                                                                     "key":  66,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "b"
+                                                                 },
+                                                                 {
+                                                                     "key":  65,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "ba"
+                                                                 },
+                                                                 {
+                                                                     "key":  78,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "ban"
+                                                                 },
+                                                                 {
+                                                                     "key":  75,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "bank"
+                                                                 },
+                                                                 {
+                                                                     "key":  50,
+                                                                     "tested":  true,
+                                                                     "eaten":  true,
+                                                                     "keyboard_state_set":  true,
+                                                                     "ctrl":  0,
+                                                                     "alt":  0,
+                                                                     "left_win":  0,
+                                                                     "right_win":  0,
+                                                                     "text":  "河岸"
+                                                                 }
+                                                             ]
+                                           }
+                       }
+}

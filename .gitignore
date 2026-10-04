@@ -1,7 +1,10 @@
 tools/llvm-mingw*/
 tools/llvm-mingw.zip
+tools/inno-setup/
+tools/innosetup-*.exe
 third_party/ecdict.csv
 build/
+/%SystemDrive%/
 data/dictionary.tsv
 __pycache__/
 *.download
