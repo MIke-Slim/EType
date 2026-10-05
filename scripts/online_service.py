@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import re
+import sys
 import threading
 from online_services import FreeTranslator, OnlineDictionary, OnlineSpeech, ServiceError, QuotaError
 
@@ -21,6 +22,11 @@ def main():
     origin = f'http://127.0.0.1:{args.port}'
 
     class Handler(BaseHTTPRequestHandler):
+        def log_message(self, format, *values):
+            # pythonw has no stderr. Logging must not abort a valid HTTP response.
+            if sys.stderr is not None:
+                super().log_message(format, *values)
+
         def send(self, status, body, content_type='application/json; charset=utf-8'):
             if not isinstance(body, bytes):
                 body = json.dumps(body, ensure_ascii=False).encode('utf-8')
@@ -115,7 +121,8 @@ def main():
             finally:
                 active.release()
 
-    print(f'Online preview: {origin}', flush=True)
+    if sys.stdout is not None:
+        print(f'Online preview: {origin}', flush=True)
     ThreadingHTTPServer(('127.0.0.1', args.port), Handler).serve_forever()
 
 if __name__ == '__main__':

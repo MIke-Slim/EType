@@ -8,9 +8,14 @@
 #include <mutex>
 #include <filesystem>
 #include <sstream>
+#include <shlobj.h>
 namespace etype {
 #ifdef ETYPE_ONLINE
+#ifdef ETYPE_ONLINE_TEST
+static constexpr INTERNET_PORT workerPort=49183;
+#else
 static constexpr INTERNET_PORT workerPort=49182;
+#endif
 static constexpr const char* workerMode="\"online_only\":true";
 #else
 static constexpr INTERNET_PORT workerPort=49181;
@@ -45,6 +50,32 @@ static void ensureWorker(HANDLE cancel=nullptr){
     auto executable=root/L"runtime"/L"ETypeService.exe";
 #ifdef ETYPE_ONLINE
     executable=root/L"runtime"/L"ETypeOnlineService.exe";
+    auto python=root/L"runtime"/L"python"/L"pythonw.exe";
+    auto script=root/L"runtime"/L"online_service.py";
+    if(std::filesystem::exists(python)&&std::filesystem::exists(script)){
+        if(workerReady())return;
+        auto name=L"Local\\ETypeOnline.WorkerStartup."+std::to_wstring(workerPort);
+        HANDLE gate=CreateMutexW(nullptr,FALSE,name.c_str());if(!gate)throw std::runtime_error("Worker startup lock failed");
+        DWORD locked=WaitForSingleObject(gate,15000);
+        if(locked!=WAIT_OBJECT_0&&locked!=WAIT_ABANDONED){CloseHandle(gate);throw std::runtime_error("Worker startup busy");}
+        try{
+            if(!workerReady()){
+                wchar_t user[MAX_PATH]{};if(FAILED(SHGetFolderPathW(nullptr,CSIDL_LOCAL_APPDATA,nullptr,SHGFP_TYPE_CURRENT,user)))throw std::runtime_error("Cache folder unavailable");
+                auto cache=std::filesystem::path(user)/L"ETypeOnline"/L"audio";
+                auto command=L"\""+python.wstring()+L"\" -B -u \""+script.wstring()+L"\" --port "+std::to_wstring(workerPort)+L" --cache \""+cache.wstring()+L"\"";
+                STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION process{};
+                if(!CreateProcessW(python.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,root.c_str(),&startup,&process))throw std::runtime_error("Online worker startup failed");
+                CloseHandle(process.hThread);CloseHandle(process.hProcess);
+                auto deadline=GetTickCount64()+10000;
+                while(!workerReady()){
+                    if(GetTickCount64()>deadline)throw std::runtime_error("Online worker startup timed out");
+                    if(cancel&&WaitForSingleObject(cancel,0)==WAIT_OBJECT_0)throw std::runtime_error("Speech cancelled");
+                    Sleep(100);
+                }
+            }
+        }catch(...){ReleaseMutex(gate);CloseHandle(gate);throw;}
+        ReleaseMutex(gate);CloseHandle(gate);return;
+    }
 #endif
     // Development builds keep their explicitly started development service.
     if(!std::filesystem::exists(executable))return;
