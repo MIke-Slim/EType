@@ -4,7 +4,8 @@ from pathlib import Path
 import sys
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from online_services import FreeTranslator, OnlineDictionary, ServiceError, validate_text
+from online_services import FreeTranslator, OnlineDictionary, OnlineSpeech, ServiceError, validate_text
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,6 +22,25 @@ class OnlineTests(unittest.TestCase):
         self.assertIn('apple', dictionary.corrections('aple'))
         self.assertIn('apple', dictionary.corrections('appel'))
         self.assertEqual([], dictionary.corrections('apple'))
+        self.assertIn('computer', dictionary.corrections('computarx'))
+
+    def test_voice_accent_and_bounded_cache(self):
+        with tempfile.TemporaryDirectory() as folder:
+            speech = OnlineSpeech(folder)
+            calls = []
+            async def synth(text, voice, speed):
+                calls.append((voice, speed))
+                return b'x' * 120
+            speech._synthesize = synth
+            speech.CACHE_LIMIT = 250
+            us = speech.synthesize('apple')
+            speech.synthesize('apple')
+            gb = speech.synthesize('apple', 'male', .8, 'gb')
+            speech.synthesize('bank')
+            self.assertEqual(3, len(calls))
+            self.assertEqual('en-US-AriaNeural', us['voice'])
+            self.assertEqual('en-GB-RyanNeural', gb['voice'])
+            self.assertLessEqual(sum(p.stat().st_size for p in Path(folder).glob('*.mp3')), 250)
 
     def test_dictionary_rejects_tampered_download(self):
         def fetch(url, limit):

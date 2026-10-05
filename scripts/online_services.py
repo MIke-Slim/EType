@@ -14,7 +14,27 @@ import urllib.request
 DICTIONARY_URL = 'https://raw.githubusercontent.com/MIke-Slim/EType/codex/online-lite/online-data/v1/'
 MYMEMORY_URL = 'https://api.mymemory.translated.net/get'
 
+def spelling_distance(a, b, limit):
+    if abs(len(a) - len(b)) > limit:
+        return limit + 1
+    previous = list(range(len(b) + 1))
+    older = previous
+    for i, left in enumerate(a, 1):
+        current = [i]
+        for j, right in enumerate(b, 1):
+            value = min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (left != right))
+            if i > 1 and j > 1 and left == b[j - 2] and a[i - 2] == right:
+                value = min(value, older[j - 2] + 1)
+            current.append(value)
+        if min(current) > limit:
+            return limit + 1
+        older, previous = previous, current
+    return previous[-1]
+
 class ServiceError(ValueError):
+    pass
+
+class QuotaError(ServiceError):
     pass
 
 def validate_text(text):
@@ -92,7 +112,12 @@ class OnlineDictionary:
         variants.update(a + b[1] + b[0] + b[2:] for a, b in splits if len(b) > 1)
         variants.update(a + c + b[1:] for a, b in splits if b for c in alphabet)
         variants.update(a + c + b for a, b in splits for c in alphabet)
-        return sorted(variants.intersection(words), key=lambda value: (words[value], value))[:5]
+        hits = sorted(variants.intersection(words), key=lambda value: (words[value], value))[:5]
+        if len(word) >= 5 and len(hits) < 5:
+            second = [value for value in words if value not in variants and abs(len(value) - len(word)) <= 2
+                and spelling_distance(word, value, 2) == 2]
+            hits.extend(sorted(second, key=lambda value: (words[value], value))[:5 - len(hits)])
+        return hits
 
 class FreeTranslator:
     def __init__(self, fetch=download):
@@ -103,7 +128,7 @@ class FreeTranslator:
         url = MYMEMORY_URL + '?' + urllib.parse.urlencode({'q': text, 'langpair': 'en|zh-CN'})
         data = json.loads(self.fetch(url, 300000))
         if data.get('quotaFinished') or str(data.get('responseStatus')) == '429':
-            raise ServiceError('免费翻译额度已用完，英文已保留；不会转为付费服务')
+            raise QuotaError('免费翻译额度已用完，英文已保留；不会转为付费服务')
         if str(data.get('responseStatus')) != '200':
             raise ServiceError('免费翻译服务暂时不可用，英文已保留')
         value = html.unescape(data.get('responseData', {}).get('translatedText', '')).strip()
@@ -114,6 +139,7 @@ class FreeTranslator:
 
 class OnlineSpeech:
     VOICES = {'female': 'en-US-AriaNeural', 'male': 'en-US-GuyNeural'}
+    BRITISH_VOICES = {'female': 'en-GB-SoniaNeural', 'male': 'en-GB-RyanNeural'}
     CACHE_LIMIT = 20 * 1024 * 1024
 
     def __init__(self, cache):
@@ -121,15 +147,16 @@ class OnlineSpeech:
         self.cache.mkdir(parents=True, exist_ok=True)
         self.lock = threading.Lock()
 
-    def synthesize(self, text, voice='female', speed=1.0):
+    def synthesize(self, text, voice='female', speed=1.0, accent='us'):
         text = validate_text(text)
-        if voice not in self.VOICES or speed not in (1.0, 0.8):
+        if voice not in self.VOICES or speed not in (1.0, 0.8) or accent not in ('us', 'gb'):
             raise ServiceError('音色或语速不正确')
-        key = hashlib.sha256(json.dumps([text, self.VOICES[voice], speed]).encode()).hexdigest()
+        voice_id = (self.BRITISH_VOICES if accent == 'gb' else self.VOICES)[voice]
+        key = hashlib.sha256(json.dumps([text, voice_id, speed]).encode()).hexdigest()
         file = self.cache / (key + '.mp3')
         with self.lock:
             if not file.is_file():
-                data = asyncio.run(self._synthesize(text, voice, speed))
+                data = asyncio.run(self._synthesize(text, voice_id, speed))
                 temporary = file.with_suffix('.tmp')
                 try:
                     temporary.write_bytes(data)
@@ -145,14 +172,14 @@ class OnlineSpeech:
                 if old != file:
                     total -= old.stat().st_size
                     old.unlink()
-        return {'file': str(file), 'provider': 'Edge online', 'voice': self.VOICES[voice]}
+        return {'file': str(file), 'provider': 'Edge online', 'voice': voice_id}
 
     async def _synthesize(self, text, voice, speed):
         import edge_tts
         result = bytearray()
         async def collect():
-            communication = edge_tts.Communicate(text, self.VOICES[voice], rate='-20%' if speed == 0.8 else '+0%',
-                proxy=os.environ.get('HTTPS_PROXY') or os.environ.get('HTTP_PROXY'))
+            communication = edge_tts.Communicate(text, voice, rate='-20%' if speed == 0.8 else '+0%',
+                proxy=os.environ.get('HTTPS_PROXY') or os.environ.get('HTTP_PROXY') or urllib.request.getproxies().get('https'))
             async for chunk in communication.stream():
                 if chunk['type'] == 'audio':
                     result.extend(chunk['data'])

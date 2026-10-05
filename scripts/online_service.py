@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import re
 import threading
-from online_services import FreeTranslator, OnlineDictionary, OnlineSpeech, ServiceError
+from online_services import FreeTranslator, OnlineDictionary, OnlineSpeech, ServiceError, QuotaError
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -59,7 +59,7 @@ def main():
             if not self.local() or self.headers.get('X-EType-Lab') != '1':
                 return self.send(403, {'error': '仅允许本机界面发起操作'})
             if not active.acquire(False):
-                return self.send(429, {'error': '正在处理，请稍后重试'})
+                return self.send(503, {'error': '正在处理，请稍后重试'})
             try:
                 length = int(self.headers.get('Content-Length', '0'))
                 if not 0 < length <= 8192:
@@ -97,7 +97,8 @@ def main():
                 elif self.path in ('/speak', '/native/speak'):
                     voice = self.headers.get('X-EType-Voice', 'female') if native else data.get('voice', 'female')
                     speed = float(self.headers.get('X-EType-Speed', '1')) if native else data.get('speed', 1.0)
-                    result = speech.synthesize(text, voice, speed)
+                    accent = self.headers.get('X-EType-Accent', 'us') if native else data.get('accent', 'us')
+                    result = speech.synthesize(text, voice, speed, accent)
                     if native:
                         self.send(200, Path(result['file']).read_bytes(), 'audio/mpeg')
                     else:
@@ -105,6 +106,8 @@ def main():
                         self.send(200, result)
                 else:
                     self.send(404, {'error': '不存在'})
+            except QuotaError as error:
+                self.send(429, {'error': str(error)})
             except (ServiceError, ValueError, KeyError, TypeError) as error:
                 self.send(400, {'error': str(error)})
             except Exception:

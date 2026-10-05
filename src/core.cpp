@@ -74,9 +74,14 @@ std::vector<std::string> Dictionary::correct(const std::string& value) const {
     for(size_t i=0;i<std::min<size_t>(5,hits.size());++i)r.push_back(hits[i].word);
     return r;
 }
-const Entry* Engine::entry() const { return sentenceMode ? nullptr : dictionary->find(buffer); }
+const Entry* Engine::entry() const {
+    if(sentenceMode)return nullptr;
+    if(onlineWords)return !onlineEntry_.word.empty()&&onlineEntry_.word==lower(buffer)?&onlineEntry_:nullptr;
+    return dictionary->find(buffer);
+}
 size_t Engine::count() const { if(sentenceMode)return sentences.size(); if(correcting)return corrections.size(); auto e=entry(); return e?e->candidates.size():0; }
-void Engine::invalidate() { ++revision; sentences.clear(); sentenceStatus.clear(); translating=false; corrections.clear(); correcting=false; selected=0; }
+void Engine::invalidate() { ++revision; sentences.clear(); sentenceStatus.clear(); translating=false; corrections.clear(); correcting=false; selected=0;
+    onlineEntry_={};wordPending=false;correctionLookup=false;wordMissing=false;wordStatus.clear(); }
 void Engine::reset() { buffer.clear(); caret=selectionAnchor=0; invalidate(); }
 void Engine::setSelection(size_t active,size_t anchor) {
     active=std::min(active,buffer.size());anchor=std::min(anchor,buffer.size());
@@ -118,11 +123,25 @@ Result Engine::type(char c) {
     }else {buffer.push_back(c);caret=selectionAnchor=buffer.size();}
     invalidate(); return {};
 }
+uint64_t Engine::beginWordLookup(bool correction){
+    invalidate();wordPending=true;correctionLookup=correction;
+    wordStatus=correction?L"正在联网获取纠错…":L"正在联网查词…";
+    return revision;
+}
+bool Engine::completeWordLookup(uint64_t token,const std::string& original,Entry value,std::vector<std::string> suggestions,std::wstring error){
+    if(!onlineWords||sentenceMode||!wordPending||revision!=token||buffer!=original)return false;
+    if(!value.word.empty()&&value.word!=lower(original))return false;
+    wordPending=false;onlineEntry_=std::move(value);selected=0;
+    wordMissing=error.empty()&&onlineEntry_.word.empty();
+    if(correctionLookup&&error.empty()){correcting=true;corrections=std::move(suggestions);}
+    wordStatus=!error.empty()?error:entry()?L"在线释义 · 空格选择中文":correcting?L"选择完整拼写 · Enter 可输出英文":L"未找到完整单词 · 空格获取纠错";
+    return true;
+}
 Result Engine::finish() { Result r{wide(buffer)}; reset(); return r; }
 Result Engine::choose(size_t index) {
     size_t at=pageStart()+index; if(at>=count())return {};
     if(sentenceMode){Result r{sentences[at].text};reset();return r;}
-    if(correcting) { auto fixed=corrections[at]; buffer=fixed; caret=selectionAnchor=buffer.size();correcting=false; corrections.clear(); selected=0; return {}; }
+    if(correcting) { auto fixed=corrections[at]; invalidate(); buffer=fixed; caret=selectionAnchor=buffer.size(); return {}; }
     auto e=entry(); if(!e)return {};
     Result r{e->candidates[at].text}; reset(); return r;
 }
@@ -158,6 +177,7 @@ Result Engine::key(Key k,bool extendSelection,bool byWord) {
     case Key::Space:
         if(count())return choose(selected-pageStart());
         if(sentenceMode)return type(' ');
+        if(onlineWords)return {};
         correcting=true; corrections=dictionary->correct(buffer); selected=0; return {};
     case Key::Up: if(count())selected=(selected+count()-1)%count(); return {};
     case Key::Down: if(count())selected=(selected+1)%count(); return {};

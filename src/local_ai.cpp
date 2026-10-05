@@ -7,7 +7,15 @@
 #include <cstring>
 #include <mutex>
 #include <filesystem>
+#include <sstream>
 namespace etype {
+#ifdef ETYPE_ONLINE
+static constexpr INTERNET_PORT workerPort=49182;
+static constexpr const char* workerMode="\"online_only\":true";
+#else
+static constexpr INTERNET_PORT workerPort=49181;
+static constexpr const char* workerMode="\"local_only\":true";
+#endif
 struct HttpHandle {
     HINTERNET value;
     explicit HttpHandle(HINTERNET v):value(v){if(!v)throw std::runtime_error("Local AI unavailable");}
@@ -18,14 +26,14 @@ static bool workerReady(){
     try{
         HttpHandle session(WinHttpOpen(L"EType/0.2",WINHTTP_ACCESS_TYPE_NO_PROXY,nullptr,nullptr,0));
         WinHttpSetTimeouts(session.value,200,200,200,200);
-        HttpHandle connection(WinHttpConnect(session.value,L"127.0.0.1",49181,0));
+        HttpHandle connection(WinHttpConnect(session.value,L"127.0.0.1",workerPort,0));
         HttpHandle request(WinHttpOpenRequest(connection.value,L"GET",L"/health",nullptr,nullptr,nullptr,0));
         DWORD disable=WINHTTP_DISABLE_REDIRECTS;WinHttpSetOption(request.value,WINHTTP_OPTION_DISABLE_FEATURE,&disable,sizeof(disable));
         if(!WinHttpSendRequest(request.value,nullptr,0,nullptr,0,0,0)||!WinHttpReceiveResponse(request.value,nullptr))return false;
         DWORD status=0,size=sizeof(status),read=0;char buffer[1024]{};
         if(!WinHttpQueryHeaders(request.value,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,nullptr,&status,&size,nullptr)||status!=200||!WinHttpReadData(request.value,buffer,sizeof(buffer)-1,&read))return false;
         std::string body(buffer,read);body.erase(std::remove_if(body.begin(),body.end(),[](unsigned char c){return c==' '||c=='\n'||c=='\r';}),body.end());
-        return body.find("\"native_protocol\":1")!=std::string::npos&&body.find("\"local_only\":true")!=std::string::npos;
+        return body.find("\"native_protocol\":1")!=std::string::npos&&body.find(workerMode)!=std::string::npos;
     }catch(...){return false;}
 }
 static void ensureWorker(HANDLE cancel=nullptr){
@@ -35,6 +43,9 @@ static void ensureWorker(HANDLE cancel=nullptr){
     auto root=std::filesystem::path(path).parent_path();
     if(root.filename()==L"x64"||root.filename()==L"x86")root=root.parent_path();
     auto executable=root/L"runtime"/L"ETypeService.exe";
+#ifdef ETYPE_ONLINE
+    executable=root/L"runtime"/L"ETypeOnlineService.exe";
+#endif
     // Development builds keep their explicitly started development service.
     if(!std::filesystem::exists(executable))return;
     if(workerReady())return;
@@ -76,7 +87,7 @@ static std::vector<unsigned char> postCancellable(const std::string& text,const 
     ensureWorker(cancel);
     HttpHandle session(WinHttpOpen(L"EType/0.2-dev",WINHTTP_ACCESS_TYPE_NO_PROXY,nullptr,nullptr,WINHTTP_FLAG_ASYNC));
     WinHttpSetTimeouts(session.value,1000,1000,5000,60000);
-    HttpHandle connection(WinHttpConnect(session.value,L"127.0.0.1",49181,0));
+    HttpHandle connection(WinHttpConnect(session.value,L"127.0.0.1",workerPort,0));
     AsyncHttpState state;
     // Declaration order closes the request before waiting for callback teardown,
     // and only then closes its parent connection/session.
@@ -105,7 +116,7 @@ static std::vector<unsigned char> post(const wchar_t* path,const std::string& te
     ensureWorker();
     HttpHandle session(WinHttpOpen(L"EType/0.2-dev",WINHTTP_ACCESS_TYPE_NO_PROXY,nullptr,nullptr,0));
     WinHttpSetTimeouts(session.value,1000,1000,5000,60000);
-    HttpHandle connection(WinHttpConnect(session.value,L"127.0.0.1",49181,0));
+    HttpHandle connection(WinHttpConnect(session.value,L"127.0.0.1",workerPort,0));
     HttpHandle request(WinHttpOpenRequest(connection.value,L"POST",path,nullptr,nullptr,nullptr,0));
     DWORD disable=WINHTTP_DISABLE_REDIRECTS;
     WinHttpSetOption(request.value,WINHTTP_OPTION_DISABLE_FEATURE,&disable,sizeof(disable));
@@ -114,7 +125,7 @@ static std::vector<unsigned char> post(const wchar_t* path,const std::string& te
         ||!WinHttpReceiveResponse(request.value,nullptr))throw std::runtime_error("Local AI request failed");
     DWORD status=0,size=sizeof(status);
     if(!WinHttpQueryHeaders(request.value,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,nullptr,&status,&size,nullptr)||status!=200)
-        throw std::runtime_error("Local AI service rejected request");
+        throw std::runtime_error(status==429?"FREE_QUOTA":"Local AI service rejected request");
     std::vector<unsigned char> result;
     for(;;){DWORD available=0;if(!WinHttpQueryDataAvailable(request.value,&available))throw std::runtime_error("Read failed");
         if(!available)break;
@@ -137,12 +148,70 @@ std::vector<Candidate> translateLocal(const std::string& text) {
     }
     if(result.empty())throw std::runtime_error("No candidates");return result;
 }
-std::vector<unsigned char> speechLocal(const std::string& text,bool male,bool slow,HANDLE cancel) {
+Entry lookupOnlineWord(const std::string& text){
+    auto bytes=post(L"/native/word",text,L"",65536);
+    std::string body(bytes.begin(),bytes.end());if(body=="#MISSING")return {};
+    std::istringstream rows(body);std::string line;Entry result;
+    while(std::getline(rows,line)){
+        std::istringstream fields(line);std::vector<std::string> values;std::string value;
+        while(std::getline(fields,value,'\t'))values.push_back(value);
+        if(!line.empty()&&line.back()=='\t')values.emplace_back();
+        if(values.size()!=7||values[0]!=lower(text)||values[5].empty()||result.candidates.size()>=50)throw std::runtime_error("Invalid online word");
+        result.word=values[0];result.phonetic=wide(values[1]);result.root=wide(values[2]);result.form=wide(values[3]);
+        result.candidates.push_back({wide(values[5]),wide(values[6])});
+    }
+    if(result.candidates.empty())throw std::runtime_error("Invalid online word");return result;
+}
+std::vector<std::string> correctOnlineWord(const std::string& text){
+    auto bytes=post(L"/native/correct",text,L"",1024);std::istringstream rows(std::string(bytes.begin(),bytes.end()));
+    std::vector<std::string> result;std::string word;
+    while(std::getline(rows,word)){
+        if(word.empty()||word.size()>48||result.size()>=5||std::any_of(word.begin(),word.end(),[](char c){return !(c>='a'&&c<='z')&&c!='\''&&c!='-';}))throw std::runtime_error("Invalid correction");
+        result.push_back(word);
+    }return result;
+}
+std::vector<unsigned char> speechLocal(const std::string& text,bool male,bool slow,HANDLE cancel,bool british) {
     auto headers=std::wstring(L"X-EType-Voice: ")+(male?L"male":L"female")+L"\r\nX-EType-Speed: "+(slow?L"0.8":L"1.0")+L"\r\n";
+#ifdef ETYPE_ONLINE
+    headers+=std::wstring(L"X-EType-Accent: ")+(british?L"gb":L"us")+L"\r\n";
+#else
+    (void)british;
+#endif
     return cancel?postCancellable(text,headers,cancel):post(L"/native/speak",text,headers,8*1024*1024);
 }
 bool playLocalAudio(const std::vector<unsigned char>& wav,int volume,HANDLE cancel) {
     if(cancel&&WaitForSingleObject(cancel,0)==WAIT_OBJECT_0)return false;
+#ifdef ETYPE_ONLINE
+    if(wav.size()>=100&&wav.size()<=8*1024*1024&&(!memcmp(wav.data(),"ID3",3)||(wav[0]==0xff&&(wav[1]&0xe0)==0xe0))){
+        wchar_t directory[MAX_PATH]{},path[MAX_PATH]{};
+        if(!GetTempPathW(MAX_PATH,directory)||!GetTempFileNameW(directory,L"eto",0,path))return false;
+        HANDLE file=CreateFileW(path,GENERIC_WRITE,0,nullptr,TRUNCATE_EXISTING,FILE_ATTRIBUTE_TEMPORARY,nullptr);
+        DWORD written=0;bool stored=file!=INVALID_HANDLE_VALUE&&WriteFile(file,wav.data(),(DWORD)wav.size(),&written,nullptr)&&written==wav.size();
+        if(file!=INVALID_HANDLE_VALUE)CloseHandle(file);
+        bool ok=false;std::wstring alias=L"ETypeOnlineAudio"+std::to_wstring(GetCurrentProcessId());
+        if(stored){
+            auto command=L"open \""+std::wstring(path)+L"\" type mpegvideo alias "+alias;
+            if(!mciSendStringW(command.c_str(),nullptr,0,nullptr)){
+                command=L"setaudio "+alias+L" volume to "+std::to_wstring(std::clamp(volume,0,100)*10);
+                if(!mciSendStringW(command.c_str(),nullptr,0,nullptr)){
+                    command=L"play "+alias;ok=!mciSendStringW(command.c_str(),nullptr,0,nullptr);
+                    auto deadline=GetTickCount64()+120000;
+                    while(ok){
+                        if(cancel&&WaitForSingleObject(cancel,0)==WAIT_OBJECT_0){ok=false;break;}
+                        wchar_t mode[64]{};command=L"status "+alias+L" mode";
+                        if(mciSendStringW(command.c_str(),mode,64,nullptr)){ok=false;break;}
+                        if(wcscmp(mode,L"stopped")==0)break;
+                        if(GetTickCount64()>deadline){ok=false;break;}
+                        MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){TranslateMessage(&message);DispatchMessageW(&message);}
+                        Sleep(25);
+                    }
+                }
+                command=L"close "+alias;mciSendStringW(command.c_str(),nullptr,0,nullptr);
+            }
+        }
+        DeleteFileW(path);return ok;
+    }
+#endif
     // Validate the PCM container instead of trusting an arbitrary HTTP response.
     if(wav.size()<44||memcmp(wav.data(),"RIFF",4)||memcmp(wav.data()+8,"WAVE",4))return false;
     auto u32=[&](size_t n){uint32_t v=0;memcpy(&v,wav.data()+n,4);return v;};

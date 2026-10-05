@@ -2,6 +2,11 @@
 #include <windows.h>
 #include <functional>
 #include "core.h"
+#ifdef ETYPE_ONLINE
+#define ETYPE_SCOPE L"ETypeOnline"
+#else
+#define ETYPE_SCOPE L"EType"
+#endif
 namespace etype {
 std::wstring moduleRoot(HMODULE module);
 std::shared_ptr<const Dictionary> loadDictionary(const std::wstring& root);

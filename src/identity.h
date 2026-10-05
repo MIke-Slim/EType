@@ -22,3 +22,8 @@ inline constexpr GUID ETypePreviewId={0xc1583597,0x74da,0x45f6,{0xab,0x51,0xda,0
 struct IPreviewTextService:public IUnknown {
     virtual HRESULT STDMETHODCALLTYPE InitializeHost(ITfThreadMgr*,TfClientId)=0;
 };
+inline constexpr GUID ETypeOnlineStateId={0x58e23588,0x52a7,0x4882,{0xb0,0x1b,0x67,0xc8,0xb7,0x6b,0x44,0xe2}};
+struct IOnlinePreviewState:public IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE GetState(DWORD* flags,UINT* count)=0;
+    virtual HRESULT STDMETHODCALLTYPE FindCorrection(LPCSTR word,INT* index)=0;
+};

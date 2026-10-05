@@ -14,6 +14,9 @@ using namespace etype;
 static HMODULE module;
 static std::atomic<long> objects{0}, locks{0};
 struct TranslationJob {
+    int kind=0;
+    Entry entry;
+    std::vector<std::string> corrections;
     uint64_t revision=0,epoch=0;
     std::string original;
     std::vector<Candidate> candidates;
@@ -25,8 +28,14 @@ static DWORD WINAPI translateWorker(void* argument) {
     HMODULE pin;
     {
         std::unique_ptr<TranslationThread> work((TranslationThread*)argument);pin=work->pin;
-        try{work->job->candidates=translateLocal(work->job->original);}
-        catch(...){work->job->error=L"翻译暂不可用 · 英文已保留 · Enter 重试";}
+        try{if(work->job->kind==1)work->job->entry=lookupOnlineWord(work->job->original);
+            else if(work->job->kind==2)work->job->corrections=correctOnlineWord(work->job->original);
+            else work->job->candidates=translateLocal(work->job->original);}
+        catch(const std::exception& error){
+            work->job->error=std::string(error.what())=="FREE_QUOTA"?L"免费翻译额度已用完 · 英文已保留":
+                work->job->kind?L"在线查词暂不可用 · 英文已保留 · 空格重试":L"翻译暂不可用 · 英文已保留 · Enter 重试";
+        }
+        catch(...){work->job->error=L"在线服务暂不可用 · 英文已保留";}
         work->job->done.store(true,std::memory_order_release);
     }
     --locks;FreeLibraryAndExitThread(pin,0);return 0;
@@ -44,7 +53,7 @@ public:
     STDMETHODIMP DoEditSession(TfEditCookie cookie) override {try{return action_(cookie);}catch(...){return E_FAIL;}}
 };
 
-class TextService final:public ITfTextInputProcessor,public ITfKeyEventSink,public ITfThreadMgrEventSink,public ITfCompositionSink,public IPreviewTextService {
+class TextService final:public ITfTextInputProcessor,public ITfKeyEventSink,public ITfThreadMgrEventSink,public ITfCompositionSink,public IPreviewTextService,public IOnlinePreviewState {
     LONG refs_=1;
     ITfThreadMgr* thread_=nullptr;
     ITfContext* context_=nullptr;
@@ -63,14 +72,27 @@ class TextService final:public ITfTextInputProcessor,public ITfKeyEventSink,publ
     static LRESULT CALLBACK completionProc(HWND h,UINT message,WPARAM w,LPARAM l) {
         auto self=(TextService*)GetWindowLongPtrW(h,GWLP_USERDATA);
         if(message==WM_NCCREATE){self=(TextService*)((CREATESTRUCTW*)l)->lpCreateParams;SetWindowLongPtrW(h,GWLP_USERDATA,(LONG_PTR)self);}
-        if(message==WM_TIMER&&self){self->pollTranslation();return 0;}
+        if(message==WM_TIMER&&self){if(w==2){KillTimer(h,2);self->beginLookup(false);}else self->pollTranslation();return 0;}
         return DefWindowProcW(h,message,w,l);
     }
     void pollTranslation() {
         if(!job_||!job_->done.load(std::memory_order_acquire))return;
         auto job=std::move(job_);KillTimer(completion_,1);
         if(!context_||contextEpoch_!=job->epoch)return;
-        if(engine_.completeTranslation(job->revision,job->original,std::move(job->candidates),job->error))popup_.show(anchor_);
+        bool accepted=job->kind?engine_.completeWordLookup(job->revision,job->original,std::move(job->entry),std::move(job->corrections),job->error):
+            engine_.completeTranslation(job->revision,job->original,std::move(job->candidates),job->error);
+        if(accepted)popup_.show(anchor_);
+    }
+    void beginLookup(bool correction){
+        if(!engine_.onlineWords||engine_.sentenceMode||engine_.english||engine_.buffer.empty()||!context_||engine_.wordPending)return;
+        auto job=std::make_shared<TranslationJob>();job->kind=correction?2:1;job->original=engine_.buffer;job->epoch=contextEpoch_;
+        job->revision=engine_.beginWordLookup(correction);HMODULE pin=nullptr;
+        if(!completion_||locks>=2||!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,(LPCWSTR)&translateWorker,&pin)){
+            engine_.completeWordLookup(job->revision,job->original,{},{},L"在线服务忙 · 空格重试");popup_.show(anchor_);return;
+        }
+        auto work=new TranslationThread{job,pin};++locks;auto thread=CreateThread(nullptr,0,translateWorker,work,0,nullptr);
+        if(!thread){--locks;delete work;FreeLibrary(pin);engine_.completeWordLookup(job->revision,job->original,{},{},L"查词启动失败 · 英文已保留");}
+        else{CloseHandle(thread);job_=job;SetTimer(completion_,1,80,nullptr);}popup_.show(anchor_);
     }
     void beginTranslation() {
         if(!engine_.sentenceMode||engine_.buffer.empty()||engine_.translating)return;
@@ -239,7 +261,7 @@ class TextService final:public ITfTextInputProcessor,public ITfKeyEventSink,publ
     }
     void detach() {
         ++contextEpoch_;
-        job_.reset();if(completion_)KillTimer(completion_,1);
+        job_.reset();if(completion_){KillTimer(completion_,1);KillTimer(completion_,2);}
         popup_.hide();engine_.reset();
         auto oldContext=context_;auto oldComposition=composition_;context_=nullptr;composition_=nullptr;
         if(oldComposition&&oldContext){
@@ -274,10 +296,15 @@ class TextService final:public ITfTextInputProcessor,public ITfKeyEventSink,publ
 public:
     TextService():root_(moduleRoot(module)),engine_(loadDictionary(root_)),popup_(module,engine_,root_) {
         ++objects;
+#ifdef ETYPE_ONLINE
+        engine_.onlineWords=true;
+#endif
         auto settings=readSettings();engine_.chinesePunctuation=settings.chinesePunctuation;engine_.sentenceMode=settings.sentenceMode;
         WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=module;wc.lpfnWndProc=completionProc;wc.lpszClassName=L"EType.Completion.v1";RegisterClassExW(&wc);
         completion_=CreateWindowExW(0,wc.lpszClassName,L"",0,0,0,0,0,HWND_MESSAGE,nullptr,module,this);
-        popup_.select=[this](size_t index){auto revision=engine_.revision;if(context_)requestInput(context_,[this,index,revision](TfEditCookie cookie){return engine_.revision==revision?apply(cookie,engine_.choose(index)):S_OK;},true);};
+        popup_.select=[this](size_t index){auto revision=engine_.revision;if(context_)requestInput(context_,[this,index,revision](TfEditCookie cookie){
+            if(engine_.revision!=revision)return S_OK;auto result=apply(cookie,engine_.choose(index));
+            if(engine_.onlineWords&&!engine_.sentenceMode&&!engine_.buffer.empty())SetTimer(completion_,2,450,nullptr);return result;},true);};
         popup_.changeMode=[this](){if(context_)requestInput(context_,[this](TfEditCookie cookie){return toggleSentence(cookie);},true);};
         popup_.translate=[this](){if(context_)requestInput(context_,[this](TfEditCookie cookie){syncSelection(cookie);beginTranslation();return S_OK;},true);};
     }
@@ -289,17 +316,27 @@ public:
         else if(id==IID_ITfThreadMgrEventSink)*p=static_cast<ITfThreadMgrEventSink*>(this);
         else if(id==IID_ITfCompositionSink)*p=static_cast<ITfCompositionSink*>(this);
         else if(id==ETypePreviewId)*p=static_cast<IPreviewTextService*>(this);
+        else if(id==ETypeOnlineStateId)*p=static_cast<IOnlinePreviewState*>(this);
         else return E_NOINTERFACE;AddRef();return S_OK;
     }
     STDMETHODIMP_(ULONG) AddRef()override{return InterlockedIncrement(&refs_);}
     STDMETHODIMP_(ULONG) Release()override {auto r=InterlockedDecrement(&refs_);if(!r)delete this;return r;}
+    STDMETHODIMP GetState(DWORD* flags,UINT* count)override {
+        if(!flags||!count)return E_POINTER;
+        *flags=(engine_.wordPending?1:0)|(engine_.translating?2:0)|(engine_.wordMissing?4:0)|(engine_.correcting?8:0)|(engine_.sentenceMode?16:0);
+        *count=(UINT)engine_.count();return S_OK;
+    }
+    STDMETHODIMP FindCorrection(LPCSTR word,INT* index)override {
+        if(!word||!index)return E_POINTER;auto found=std::find(engine_.corrections.begin(),engine_.corrections.end(),word);
+        *index=found==engine_.corrections.end()?-1:(INT)(found-engine_.corrections.begin());return S_OK;
+    }
     STDMETHODIMP InitializeHost(ITfThreadMgr* t,TfClientId id)override {
-        if(!t||thread_||!engine_.dictionary->size())return E_INVALIDARG;
+        if(!t||thread_||(!engine_.onlineWords&&!engine_.dictionary->size()))return E_INVALIDARG;
         thread_=t;t->AddRef();client_=id;preview_=true;return S_OK;
     }
     STDMETHODIMP Activate(ITfThreadMgr* t,TfClientId id)override {
         if(!t)return E_INVALIDARG;if(thread_)return E_UNEXPECTED;
-        if(!engine_.dictionary->size())return E_FAIL;
+        if(!engine_.onlineWords&&!engine_.dictionary->size())return E_FAIL;
         thread_=t;t->AddRef();client_=id;
         ITfKeystrokeMgr* km=nullptr;HRESULT hr=t->QueryInterface(IID_ITfKeystrokeMgr,(void**)&km);
         if(SUCCEEDED(hr)){hr=km->AdviseKeyEventSink(id,this,TRUE);release(km);}
@@ -327,6 +364,9 @@ public:
         bool ctrl=(GetKeyState(VK_CONTROL)&0x8000)!=0,shift=(GetKeyState(VK_SHIFT)&0x8000)!=0;
         if(w==VK_F2){popup_.toggleDetails(anchor_);return S_OK;}
         if(ctrl&&shift&&w==VK_SPACE){requestInput(c,[this](TfEditCookie cookie){return toggleSentence(cookie);});return S_OK;}
+        if(w==VK_SPACE&&engine_.onlineWords&&!engine_.sentenceMode&&!engine_.english&&!engine_.count()){
+            requestInput(c,[this](TfEditCookie){beginLookup(engine_.wordMissing);return S_OK;});return S_OK;
+        }
         if(w==VK_RETURN&&engine_.sentenceMode&&!engine_.english){
             auto hr=requestInput(c,[this,ctrl](TfEditCookie cookie){
                 syncSelection(cookie);
@@ -337,7 +377,8 @@ public:
             if(FAILED(hr)){detach();*eaten=FALSE;}return S_OK;
         }
         wchar_t ch=character(w,l);
-        HRESULT hr=requestInput(c,[this,w,ch,shift,ctrl](TfEditCookie cookie){syncSelection(cookie);return apply(cookie,dispatch(w,ch,shift,ctrl));});
+        HRESULT hr=requestInput(c,[this,w,ch,shift,ctrl](TfEditCookie cookie){syncSelection(cookie);auto before=engine_.buffer;auto result=apply(cookie,dispatch(w,ch,shift,ctrl));
+            if(engine_.onlineWords&&engine_.buffer!=before){KillTimer(completion_,2);if(!engine_.sentenceMode&&!engine_.english&&!engine_.buffer.empty())SetTimer(completion_,2,450,nullptr);}return result;});
         if(FAILED(hr)){detach();*eaten=FALSE;}
         return S_OK;
     }

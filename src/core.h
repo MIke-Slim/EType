@@ -45,6 +45,11 @@ public:
     uint64_t beginTranslation();
     bool completeTranslation(uint64_t revision, const std::string& original,
                              std::vector<Candidate> values, std::wstring error = {});
+    uint64_t beginWordLookup(bool correction=false);
+    bool completeWordLookup(uint64_t revision, const std::string& original, Entry entry,
+                            std::vector<std::string> suggestions={}, std::wstring error={});
+    bool onlineWords=false, wordPending=false, correctionLookup=false, wordMissing=false;
+    std::wstring wordStatus;
     std::shared_ptr<const Dictionary> dictionary;
     std::string buffer;
     std::vector<std::string> corrections;
@@ -56,6 +61,7 @@ public:
     size_t selected = 0;
     size_t caret = 0, selectionAnchor = 0;
 private:
+    Entry onlineEntry_;
     size_t wordLeft() const;
     size_t wordRight() const;
     void eraseSelection();

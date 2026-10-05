@@ -16,7 +16,13 @@ std::shared_ptr<const Dictionary> loadDictionary(const std::wstring& root) {
     static std::mutex mutex; static std::weak_ptr<const Dictionary> cached;
     std::lock_guard<std::mutex> lock(mutex);
     if(auto old=cached.lock())return old;
-    auto d=std::make_shared<Dictionary>(); d->load(root+L"\\data\\dictionary.tsv"); cached=d; return d;
+    auto d=std::make_shared<Dictionary>();
+#ifndef ETYPE_ONLINE
+    d->load(root+L"\\data\\dictionary.tsv");
+#else
+    (void)root;
+#endif
+    cached=d; return d;
 }
 std::wstring settingsFile() {
     // Isolate component tests from the user's saved preferences.
@@ -25,7 +31,7 @@ std::wstring settingsFile() {
         if(n&&n<32768)return std::wstring(file,n);
     }
     wchar_t path[MAX_PATH]; if(FAILED(SHGetFolderPathW(nullptr,CSIDL_LOCAL_APPDATA,nullptr,SHGFP_TYPE_CURRENT,path)))return {};
-    auto folder=std::wstring(path)+L"\\EType"; CreateDirectoryW(folder.c_str(),nullptr); return folder+L"\\settings.ini";
+    auto folder=std::wstring(path)+L"\\" ETYPE_SCOPE; CreateDirectoryW(folder.c_str(),nullptr); return folder+L"\\settings.ini";
 }
 Settings readSettings() {
     Settings s; auto file=settingsFile();
@@ -59,11 +65,11 @@ namespace {
 struct SpeechShared { volatile LONG pid,state; };
 struct SpeechMapping {
     HANDLE handle=nullptr;SpeechShared* data=nullptr;
-    SpeechMapping(){handle=CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,sizeof(SpeechShared),L"Local\\EType.Speech.Status.v2");if(handle)data=(SpeechShared*)MapViewOfFile(handle,FILE_MAP_ALL_ACCESS,0,0,sizeof(SpeechShared));}
+    SpeechMapping(){handle=CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,sizeof(SpeechShared),L"Local\\" ETYPE_SCOPE L".Speech.Status.v2");if(handle)data=(SpeechShared*)MapViewOfFile(handle,FILE_MAP_ALL_ACCESS,0,0,sizeof(SpeechShared));}
     ~SpeechMapping(){if(data)UnmapViewOfFile(data);if(handle)CloseHandle(handle);}
 };
 SpeechMapping& speechMapping(){static SpeechMapping mapping;return mapping;}
-std::wstring cancelName(DWORD pid){return L"Local\\EType.Speech.Stop.v2."+std::to_wstring(pid);}
+std::wstring cancelName(DWORD pid){return L"Local\\" ETYPE_SCOPE L".Speech.Stop.v2."+std::to_wstring(pid);}
 void signalSpeech(DWORD pid){auto event=OpenEventW(EVENT_MODIFY_STATE,FALSE,cancelName(pid).c_str());if(event){SetEvent(event);CloseHandle(event);}}
 }
 bool speechBusy(SpeechState state){return state==SpeechState::Preparing||state==SpeechState::Playing||state==SpeechState::Stopping;}
@@ -190,7 +196,7 @@ void Popup::paint(HDC supplied) {
         if(engine_.sentenceMode)detail=engine_.sentenceStatus.empty()?L"空格分词 · Enter 翻译/选中文 · Ctrl+Enter 输出英文":engine_.sentenceStatus;
         else if(engine_.correcting)detail=L"拼写建议 · 确认英文后再选择中文";
         else if(e){if(!e->phonetic.empty())detail=L"/"+e->phonetic+L"/";if(!e->root.empty())detail+=L"   原形 "+e->root+L" · "+e->form;}
-        else detail=L"完整拼写后显示释义 · 空格检查拼写";
+        else detail=engine_.onlineWords&&!engine_.wordStatus.empty()?engine_.wordStatus:L"完整拼写后显示释义 · 空格检查拼写";
         if(speechBusy(speech.state)||speech.state==SpeechState::Failed)detail+=L"   ·   "+speechStatusText(speech.state);
         text(buffer,detail,{px(16),px(engine_.sentenceMode?96:74),area.right-px(12),px(engine_.sentenceMode?123:99)},px(12),muted);
         size_t start=engine_.pageStart(),end=std::min(start+5,engine_.count());

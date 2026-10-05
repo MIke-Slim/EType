@@ -30,6 +30,7 @@ static ITfContext* trialContext=nullptr;
 static EditorStore* trialStore=nullptr;
 static bool componentSelfTest=false;
 static bool sentenceSelfTest=false;
+static bool onlineSelfTest=false;
 static unsigned testActivationNotifications=0,testEditFocusNotifications=0;
 static int scale=100;
 static int settingsScroll=0;
@@ -91,7 +92,13 @@ static HRESULT startTrial(){
     if(trialSink){trialThread->SetFocus(trialDocument);return S_OK;}
     HRESULT hr=CoCreateInstance(CLSID_TF_ThreadMgr,nullptr,CLSCTX_INPROC_SERVER,IID_ITfThreadMgr,(void**)&trialThread);
     TfClientId id=0;
-    if(SUCCEEDED(hr)&&componentSelfTest){
+    if(SUCCEEDED(hr)&&
+#ifdef ETYPE_ONLINE
+       true
+#else
+       componentSelfTest
+#endif
+       ){
         // Only the explicitly loaded preview service belongs to this test.
         // Do not activate the desktop's installed TIP in the same text store.
         ITfThreadMgrEx* isolated=nullptr;
@@ -146,6 +153,9 @@ static void refreshVoices(){
     auto available=voices();bool gb=false;
     for(auto& pair:available)if(pair.second.find(L"809")!=std::wstring::npos)gb=true;
     std::wstring description=L"美式：本地 Kokoro 自然语音 · 英式 Windows 音源："+std::wstring(gb?L"可用":L"未安装");
+#ifdef ETYPE_ONLINE
+    description=L"免费在线自然语音 · 发音需要联网";
+#endif
     SetWindowTextW(statusLabel,description.c_str());
 }
 static LRESULT CALLBACK isolatedEdit(HWND h,UINT message,WPARAM w,LPARAM l,UINT_PTR,DWORD_PTR){
@@ -168,11 +178,21 @@ static void createControls(){
     auto title=control(L"STATIC",L"EType · 英文学习输入法",SS_LEFT,0,110,27,640,44);SendMessageW(title,WM_SETFONT,(WPARAM)titleFont,TRUE);
     label(L"练习英文单词与句子，选择中文表达。",35,79,750,28);
     std::wstring count=L"离线词库  "+std::to_wstring(dictionary->size())+L" 个词条   ·   完整拼写   ·   固定候选顺序";
+#ifdef ETYPE_ONLINE
+    count=L"在线词库 · 完整拼写 · 多义候选 · 不内置大模型";
+#endif
     label(count.c_str(),35,119,750,28);
+#ifdef ETYPE_ONLINE
+    label(L"在线轻量开发版",35,172,178,30);
+    SetWindowTextW(title,L"EType · 在线轻量版");
+#else
     control(L"BUTTON",L"安装系统输入法",BS_PUSHBUTTON,101,35,166,178,38);
+#endif
     control(L"BUTTON",L"直接试用（无需安装）",BS_PUSHBUTTON,102,228,166,210,38);
     control(L"BUTTON",L"使用说明",BS_PUSHBUTTON,103,453,166,125,38);
+#ifndef ETYPE_ONLINE
     control(L"BUTTON",L"卸载输入法",BS_PUSHBUTTON,104,593,166,143,38);
+#endif
     label(L"先点击“直接试用”，再在下方输入英文单词；其他软件使用需安装。",35,227,750,27);
     edit=control(L"EDIT",L"",WS_TABSTOP|WS_BORDER|ES_MULTILINE|ES_AUTOVSCROLL|ES_WANTRETURN|WS_VSCROLL,201,35,263,701,139);
     if(componentSelfTest)SetWindowSubclass(edit,isolatedEdit,1,0);
@@ -195,13 +215,21 @@ static void createControls(){
     comboItem(modeCombo,L"单词模式");comboItem(modeCombo,L"句子模式");
     label(L"美式音色",355,613,100,28);
     voiceCombo=control(L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST,313,465,609,271,130);
+#ifdef ETYPE_ONLINE
+    comboItem(voiceCombo,L"Aria · 在线女声");comboItem(voiceCombo,L"Guy · 在线男声");
+#else
     comboItem(voiceCombo,L"Heart · 自然女声");comboItem(voiceCombo,L"Michael · 自然男声");
+#endif
     label(L"播放速度",35,665,110,28);
     speedCombo=control(L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST,314,145,661,174,130);
     comboItem(speedCombo,L"正常 1.0×");comboItem(speedCombo,L"慢速 0.8×");
     control(L"BUTTON",L"停止播放",BS_PUSHBUTTON,315,560,659,176,34);
     statusLabel=control(L"STATIC",L"",SS_LEFT,307,35,715,700,30);
+#ifdef ETYPE_ONLINE
+    label(L"翻译和朗读需要联网；免费额度不足时保留英文，不启用付费服务。",35,756,730,26);
+#else
     label(L"美式使用本地 Kokoro；英式沿用 Windows 音源。句子最长 500 字符。",35,756,730,26);
+#endif
     auto settings=readSettings();SendMessageW(fontCombo,CB_SETCURSEL,settings.fontSize-12,0);
     SendMessageW(accentCombo,CB_SETCURSEL,settings.british?1:0,0);SendMessageW(punctuationCombo,CB_SETCURSEL,settings.chinesePunctuation?0:1,0);SendMessageW(volumeBar,TBM_SETPOS,TRUE,settings.volume);
     SendMessageW(modeCombo,CB_SETCURSEL,settings.sentenceMode?1:0,0);SendMessageW(voiceCombo,CB_SETCURSEL,settings.maleVoice?1:0,0);SendMessageW(speedCombo,CB_SETCURSEL,settings.slowSpeech?1:0,0);
@@ -209,6 +237,7 @@ static void createControls(){
     refreshVoices();
 }
 static Settings currentSettings(){Settings s;s.fontSize=(int)SendMessageW(fontCombo,CB_GETCURSEL,0,0)+12;s.british=SendMessageW(accentCombo,CB_GETCURSEL,0,0)==1;s.chinesePunctuation=SendMessageW(punctuationCombo,CB_GETCURSEL,0,0)==0;s.volume=(int)SendMessageW(volumeBar,TBM_GETPOS,0,0);s.sentenceMode=SendMessageW(modeCombo,CB_GETCURSEL,0,0)==1;s.maleVoice=SendMessageW(voiceCombo,CB_GETCURSEL,0,0)==1;s.slowSpeech=SendMessageW(speedCombo,CB_GETCURSEL,0,0)==1;return s;}
+#ifndef ETYPE_ONLINE
 static void setup(bool uninstall){
     auto uninstaller=root+L"\\unins000.exe";
     if(uninstall&&std::filesystem::exists(uninstaller)){
@@ -223,6 +252,7 @@ static void setup(bool uninstall){
     auto result=(INT_PTR)ShellExecuteW(mainWindow,L"runas",L"powershell.exe",args.c_str(),root.c_str(),SW_HIDE);
     if(result<=32)MessageBoxW(mainWindow,L"安装或卸载未执行。你可以直接运行软件目录里的安装或卸载脚本。",L"EType",MB_OK|MB_ICONINFORMATION);
 }
+#endif
 static LRESULT CALLBACK proc(HWND h,UINT m,WPARAM w,LPARAM l){
     switch(m){
     case WM_CREATE:mainWindow=h;createControls();return 0;
@@ -237,10 +267,18 @@ static LRESULT CALLBACK proc(HWND h,UINT m,WPARAM w,LPARAM l){
             if(!componentSelfTest&&HIWORD(w)==EN_KILLFOCUS)focusTrial(false);
             if(!componentSelfTest&&HIWORD(w)==EN_SETFOCUS)focusTrial(true);
             break;
-        case 101:setup(false);break;
+        case 101:
+#ifndef ETYPE_ONLINE
+            setup(false);
+#endif
+            break;
         case 102:{auto hr=startTrial();if(hr!=S_OK){std::wstring text=L"未能启用本窗口试用。你仍可尝试安装系统输入法。\n错误码：";wchar_t hex[24];swprintf(hex,24,L"0x%08lX",(unsigned long)hr);text+=hex;MessageBoxW(h,text.c_str(),L"EType",MB_OK|MB_ICONINFORMATION);}else{SetFocus(edit);SetWindowTextW(statusLabel,L"本窗口已启用 EType。输入 bank 测试；在其他软件使用需要安装系统输入法。");}break;}
         case 103:{auto path=root+L"\\使用说明.txt";ShellExecuteW(h,L"open",path.c_str(),nullptr,root.c_str(),SW_SHOWNORMAL);break;}
-        case 104:setup(true);break;
+        case 104:
+#ifndef ETYPE_ONLINE
+            setup(true);
+#endif
+            break;
         case 303:{auto s=currentSettings();s.sentenceMode=readSettings().sentenceMode;writeSettings(s);int n=GetWindowTextLengthW(edit);std::wstring value(n+1,L'\0');GetWindowTextW(edit,value.data(),n+1);value.resize(n);
             LONG a=0,b=0;SendMessageW(edit,EM_GETSEL,(WPARAM)&a,(LPARAM)&b);if(b>a)value=value.substr((size_t)a,(size_t)(b-a));
             auto text=utf8(value);for(auto& c:text)if(c=='\r'||c=='\n'||c=='\t')c=' ';
@@ -341,6 +379,22 @@ static int uiSelfTest(const std::wstring& report){
         trace<<"{\"key\":"<<vk<<",\"tested\":"<<(testEaten?"true":"false")<<",\"eaten\":"<<(eaten?"true":"false")<<",\"keyboard_state_set\":"<<(keyboardSet?"true":"false")<<",\"ctrl\":"<<ctrl<<",\"alt\":"<<alt<<",\"left_win\":"<<leftWin<<",\"right_win\":"<<rightWin<<",\"text\":"<<json(value())<<"}";
         return eaten;};
     auto type=[&](const char* s){for(;*s;++s)key((UINT)toupper(*s));};
+    if(onlineSelfTest){
+        auto wait=[&](unsigned ms){auto until=GetTickCount64()+ms;while(GetTickCount64()<until)pump();};
+        IOnlinePreviewState* state=nullptr;if(trialSink)trialSink->QueryInterface(ETypeOnlineStateId,(void**)&state);
+        auto ready=[&](bool missing=false){auto until=GetTickCount64()+25000;DWORD flags=0;UINT count=0;
+            do{pump();if(state&&SUCCEEDED(state->GetState(&flags,&count))&&!(flags&3)&&(count||(missing&&(flags&4))))return true;}while(GetTickCount64()<until);return false;};
+        auto sentence=[&](const char* s){for(;*s;++s){SHORT mapped=VkKeyScanA(*s);key(LOBYTE(mapped),false,(HIBYTE(mapped)&1)!=0);}};
+        type("bank");ready();key('2');auto bank=value();SetWindowTextW(edit,L"");pump();
+        type("aple");ready(true);key(VK_SPACE);ready();INT index=-1;
+        if(state)state->FindCorrection("apple",&index);if(index>=0)key('1'+index);auto correction=value();ready();key(VK_SPACE);auto apple=value();
+        SetWindowTextW(edit,L"");pump();key(VK_SPACE,true,true);sentence("I sat on the bank.");auto original=value();key(VK_RETURN);ready();key(VK_RETURN);auto chinese=value();
+        SetWindowTextW(edit,L"");pump();sentence("I have 2 apples.");key(VK_RETURN,true);auto english=value();
+        SetWindowTextW(edit,L"");pump();sentence("I sat on the bank.");key(VK_RETURN);key('S');wait(3000);auto stale=value();key(VK_RETURN,true);
+        bool ok=externalInputBlocked&&SUCCEEDED(hr)&&bank==L"河岸"&&correction==L"apple"&&apple==L"苹果"&&original==L"I sat on the bank."&&chinese.find(L"岸")!=std::wstring::npos&&chinese.find(L"bank")==std::wstring::npos&&english==L"I have 2 apples."&&stale==L"I sat on the bank.s";
+        trace<<"]";std::ofstream f{std::filesystem::path(report)};f<<"{\"passed\":"<<(ok?"true":"false")<<",\"scope\":\"online-native-component\",\"bank\":"<<json(bank)<<",\"correction\":"<<json(correction)<<",\"apple\":"<<json(apple)<<",\"sentence\":"<<json(chinese)<<",\"english\":"<<json(english)<<",\"stale\":"<<json(stale)<<",\"key_trace\":"<<trace.str()<<"}";f.close();
+        if(state)state->Release();endTrial();DestroyWindow(mainWindow);return ok?0:1;
+    }
     type("ba");
     // Regression: native desktop activation noise cannot interrupt a directly
     // driven component test; actual preview focus changes are tested below.
@@ -398,12 +452,16 @@ int WINAPI wWinMain(HINSTANCE inst,HINSTANCE,LPWSTR,int show){
     root=moduleRoot(inst);int argc;auto argv=CommandLineToArgvW(GetCommandLineW(),&argc);
     if(argc>=3&&wcscmp(argv[1],L"--speak")==0){
         auto settings=readSettings();bool ok=false;
-        HANDLE mutex=CreateMutexW(nullptr,FALSE,L"Local\\EType.Speech.Mutex.v2");
+        HANDLE mutex=CreateMutexW(nullptr,FALSE,L"Local\\" ETYPE_SCOPE L".Speech.Mutex.v2");
         HANDLE cancel=prepareSpeechWorker();
         if(mutex&&cancel){HANDLE waits[]{cancel,mutex};DWORD lock=WaitForMultipleObjects(2,waits,FALSE,65000);
             if(lock==WAIT_OBJECT_0+1||lock==WAIT_ABANDONED_0+1){
-                if(settings.british){publishSpeechState(SpeechState::Playing);ok=speak(argv[2],true,true,L"",settings.volume,cancel);}
-                else try{auto wav=speechLocal(utf8(argv[2]),settings.maleVoice,settings.slowSpeech,cancel);if(WaitForSingleObject(cancel,0)!=WAIT_OBJECT_0){publishSpeechState(SpeechState::Playing);ok=playLocalAudio(wav,settings.volume,cancel);}}catch(...){}
+                if(settings.british
+#ifdef ETYPE_ONLINE
+                   && false
+#endif
+                   ){publishSpeechState(SpeechState::Playing);ok=speak(argv[2],true,true,L"",settings.volume,cancel);}
+else try{auto wav=speechLocal(utf8(argv[2]),settings.maleVoice,settings.slowSpeech,cancel,settings.british);if(WaitForSingleObject(cancel,0)!=WAIT_OBJECT_0){publishSpeechState(SpeechState::Playing);ok=playLocalAudio(wav,settings.volume,cancel);}}catch(...){}
                 ReleaseMutex(mutex);
             }
         }
@@ -415,11 +473,13 @@ int WINAPI wWinMain(HINSTANCE inst,HINSTANCE,LPWSTR,int show){
     dictionary=loadDictionary(root);
     if(argc>=3&&wcscmp(argv[1],L"--diagnose")==0){diagnostics(argv[2]);LocalFree(argv);CoUninitialize();return 0;}
     if(argc>=2&&wcscmp(argv[1],L"--activate")==0){auto hr=activate();LocalFree(argv);CoUninitialize();return hr==S_OK?0:1;}
-    std::wstring renderFolder,uiReport;if(argc>=3&&wcscmp(argv[1],L"--render")==0)renderFolder=argv[2];if(argc>=3&&(wcscmp(argv[1],L"--ui-selftest")==0||wcscmp(argv[1],L"--sentence-selftest")==0)){uiReport=argv[2];sentenceSelfTest=wcscmp(argv[1],L"--sentence-selftest")==0;
+    std::wstring renderFolder,uiReport;if(argc>=3&&wcscmp(argv[1],L"--render")==0)renderFolder=argv[2];if(argc>=3&&(wcscmp(argv[1],L"--ui-selftest")==0||wcscmp(argv[1],L"--sentence-selftest")==0||wcscmp(argv[1],L"--online-selftest")==0)){uiReport=argv[2];sentenceSelfTest=wcscmp(argv[1],L"--sentence-selftest")==0;onlineSelfTest=wcscmp(argv[1],L"--online-selftest")==0;
         componentSelfTest=true;
         SetEnvironmentVariableW(L"ETYPE_HEADLESS_TEST",L"1");auto isolated=uiReport+L".ini";DeleteFileW(isolated.c_str());SetEnvironmentVariableW(L"ETYPE_TEST_SETTINGS",isolated.c_str());}
     LocalFree(argv);
+#ifndef ETYPE_ONLINE
     if(!dictionary->size()){MessageBoxW(nullptr,L"未能加载离线词库。请将整个 EType 文件夹解压后运行，或重新安装。",L"EType",MB_OK|MB_ICONERROR);CoUninitialize();return 1;}
+#endif
     INITCOMMONCONTROLSEX cc{sizeof(cc),ICC_BAR_CLASSES};InitCommonControlsEx(&cc);
     scale=(int)GetDpiForSystem()*100/96;
     RECT workArea{};SystemParametersInfoW(SPI_GETWORKAREA,0,&workArea,0);scale=std::min(scale,std::max(75,(int)(workArea.right-workArea.left-48)*100/776));
