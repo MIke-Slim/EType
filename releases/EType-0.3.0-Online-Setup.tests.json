@@ -1,0 +1,200 @@
+{
+  "version": "0.3.0",
+  "source_commit": "046b037120e47f8dc4f45c797d3f80b37a1042ce",
+  "installer_sha256": "8899eab1ae54a6d7b2287bf9ed3027df51a6d702a6ef446d9a956c637e99f330",
+  "installer_bytes": 11974486,
+  "installed_bytes": 47647442,
+  "speech_cache_max_bytes": 20971520,
+  "signature": "unsigned",
+  "core_baseline_checks": 95,
+  "core_baseline_failures": 0,
+  "online_service_unit_tests": 7,
+  "windowless_worker_smoke": "health, error responses, reject foreign shutdown, owned shutdown",
+  "installer_lifecycle": [
+    {
+      "name": "reject_nonempty_foreign_directory",
+      "passed": true
+    },
+    {
+      "name": "foreign_user_file_unchanged",
+      "passed": true
+    },
+    {
+      "name": "reject_nocancel_that_disables_failure_rollback",
+      "passed": true
+    },
+    {
+      "name": "nocancel_rejection_copies_no_payload",
+      "passed": true
+    },
+    {
+      "name": "injected_failure_aborts_installation",
+      "passed": true
+    },
+    {
+      "name": "failure_was_injected_after_actual_file_copy",
+      "passed": true
+    },
+    {
+      "name": "failure_enters_installer_rollback",
+      "passed": true
+    },
+    {
+      "name": "rollback_removes_copied_payload_and_marker",
+      "passed": true
+    },
+    {
+      "name": "rollback_leaves_no_application_record",
+      "passed": true
+    },
+    {
+      "name": "install_custom_chinese_space_metacharacter_path",
+      "passed": true
+    },
+    {
+      "name": "registry_records_selected_path",
+      "passed": true
+    },
+    {
+      "name": "installed_payload_matches_every_manifest_hash",
+      "passed": true
+    },
+    {
+      "name": "uninstaller_placed_in_selected_directory",
+      "passed": true
+    },
+    {
+      "name": "actual_preview_runs_from_custom_path",
+      "passed": true
+    },
+    {
+      "name": "uninstaller_can_stop_only_its_own_online_worker",
+      "passed": true
+    },
+    {
+      "name": "reject_relocation_of_existing_installation",
+      "passed": true
+    },
+    {
+      "name": "relocation_rejection_preserves_original_installation",
+      "passed": true
+    },
+    {
+      "name": "reject_unsupported_overwrite_upgrade",
+      "passed": true
+    },
+    {
+      "name": "upgrade_rejection_preserves_dll_bytes",
+      "passed": true
+    },
+    {
+      "name": "upgrade_rejection_preserves_user_added_file",
+      "passed": true
+    },
+    {
+      "name": "reject_uninstall_while_component_is_locked",
+      "passed": true
+    },
+    {
+      "name": "locked_uninstall_preserves_payload_and_installation_record",
+      "passed": true
+    },
+    {
+      "name": "reject_uninstall_while_local_service_is_locked",
+      "passed": true
+    },
+    {
+      "name": "service_lock_rejection_preserves_models_and_registration_record",
+      "passed": true
+    },
+    {
+      "name": "reject_uninstall_without_correct_marker",
+      "passed": true
+    },
+    {
+      "name": "failed_uninstall_preserves_executable",
+      "passed": true
+    },
+    {
+      "name": "uninstall_from_chosen_directory",
+      "passed": true
+    },
+    {
+      "name": "uninstall_removes_all_owned_payload",
+      "passed": true
+    },
+    {
+      "name": "uninstall_preserves_user_added_file",
+      "passed": true
+    },
+    {
+      "name": "uninstall_removes_private_application_record",
+      "passed": true
+    },
+    {
+      "name": "reinstall_at_new_path_after_uninstall",
+      "passed": true
+    },
+    {
+      "name": "second_uninstall_completes",
+      "passed": true
+    },
+    {
+      "name": "global_etype_registration_unchanged",
+      "passed": true
+    }
+  ],
+  "production_installer": [
+    {
+      "passed": true,
+      "name": "formal_installer_accepts_custom_chinese_space_path"
+    },
+    {
+      "passed": true,
+      "name": "actual_windows_registration_x64"
+    },
+    {
+      "passed": true,
+      "name": "actual_windows_registration_x86"
+    },
+    {
+      "passed": true,
+      "name": "formal_installed_payload_matches_all_hashes"
+    },
+    {
+      "passed": true,
+      "name": "formal_installed_word_sentence_and_cold_start"
+    },
+    {
+      "passed": true,
+      "name": "formal_installed_online_speech"
+    },
+    {
+      "passed": true,
+      "name": "formal_uninstall_stops_running_worker_and_completes"
+    },
+    {
+      "passed": true,
+      "name": "formal_uninstall_preserves_user_added_file"
+    },
+    {
+      "passed": true,
+      "name": "formal_uninstall_removes_owned_payload"
+    },
+    {
+      "passed": true,
+      "name": "formal_uninstall_removes_own_registration"
+    },
+    {
+      "passed": true,
+      "name": "offline_and_online_test_registrations_unchanged"
+    }
+  ],
+  "registration_checks": {
+    "x64": 7,
+    "x86": 7,
+    "failures": 0
+  },
+  "scope": "compiled x64/x86 TSF, installed native component input, real free online services, installer lifecycle and global registration",
+  "limits": "External host keyboard routing and service availability remain subject to user testing; size excludes preserved old versions."
+}
