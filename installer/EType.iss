@@ -6,11 +6,20 @@
   #define PackageRoot "..\build\standalone\EType"
 #endif
 #ifdef InstallerTestMode
+  #ifdef OnlineEdition
+    #define PackageId "EType.OnlineInstallerValidation"
+  #else
   #define PackageId "EType.InstallerValidation"
+  #endif
   #define Title "EType 安装流程验证"
 #else
+  #ifdef OnlineEdition
+    #define PackageId "EType.OnlineWindowsInputMethod"
+    #define Title "EType 在线版"
+  #else
   #define PackageId "EType.WindowsInputMethod"
   #define Title "EType 单词与句子"
+  #endif
 #endif
 
 [Setup]
@@ -19,7 +28,11 @@ AppName={#Title}
 AppVersion={#AppVersion}
 AppPublisher=EType
 AppPublisherURL=https://github.com/MIke-Slim/EType
+#ifdef OnlineEdition
+DefaultDirName={autopf}\EType-Online
+#else
 DefaultDirName={autopf}\EType
+#endif
 DisableDirPage=no
 DisableProgramGroupPage=yes
 AllowRootDirectory=no
@@ -35,8 +48,13 @@ WizardStyle=modern
 SetupIconFile=..\assets\etype.ico
 SetupLogging=yes
 ; Model weights dominate size. Deflate avoids long solid-stream installation.
+#ifdef OnlineEdition
+Compression=lzma2/max
+SolidCompression=yes
+#else
 Compression=zip/1
 SolidCompression=no
+#endif
 CloseApplications=no
 AllowCancelDuringInstall=yes
 RestartApplications=no
@@ -48,11 +66,19 @@ VersionInfoDescription=EType Windows 输入法安装包
 #ifdef InstallerTestMode
 PrivilegesRequired=lowest
 OutputDir=..\build\installer-tests
+#ifdef OnlineEdition
+OutputBaseFilename=EType-Online-Setup-Validation
+#else
 OutputBaseFilename=EType-Setup-Validation
+#endif
 #else
 PrivilegesRequired=admin
 OutputDir=..\releases
+#ifdef OnlineEdition
+OutputBaseFilename=EType-{#AppVersion}-Online-Setup
+#else
 OutputBaseFilename=EType-{#AppVersion}-Setup
+#endif
 #endif
 
 [Languages]
@@ -61,25 +87,43 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 #ifdef InstallerTestMode
+#ifdef OnlineEdition
+Source: "online-validation.id"; DestDir: "{app}"; DestName: "etype-installation.id"; Flags: ignoreversion
+#else
 Source: "validation.id"; DestDir: "{app}"; DestName: "etype-installation.id"; Flags: ignoreversion
+#endif
+#else
+#ifdef OnlineEdition
+Source: "online-production.id"; DestDir: "{app}"; DestName: "etype-installation.id"; Flags: ignoreversion
 #else
 Source: "production.id"; DestDir: "{app}"; DestName: "etype-installation.id"; Flags: ignoreversion
+#endif
 #endif
 Source: "{#PackageRoot}\*"; DestDir: "{app}"; Excludes: "x64\*,x86\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 #ifdef InstallerTestMode
 Source: "{#PackageRoot}\x86\EType.dll"; DestDir: "{app}\x86"; Flags: ignoreversion
 Source: "{#PackageRoot}\x64\EType.dll"; DestDir: "{app}\x64"; Flags: ignoreversion; AfterInstall: RegisterComponents
 #else
+#ifdef OnlineEdition
+Source: "{#PackageRoot}\x86\EType.dll"; DestDir: "{app}\x86"; Flags: ignoreversion
+Source: "{#PackageRoot}\x64\EType.dll"; DestDir: "{app}\x64"; Flags: ignoreversion; AfterInstall: RegisterComponents
+#else
 Source: "{#PackageRoot}\x86\EType.dll"; DestDir: "{app}\x86"; Flags: ignoreversion regserver 32bit
 Source: "{#PackageRoot}\x64\EType.dll"; DestDir: "{app}\x64"; Flags: ignoreversion regserver 64bit; AfterInstall: RegisterComponents
+#endif
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; Flags: unchecked
 
 [Icons]
+#ifdef OnlineEdition
+Name: "{autoprograms}\EType 在线版"; Filename: "{app}\EType.exe"; WorkingDir: "{app}"
+Name: "{autodesktop}\EType 在线版"; Filename: "{app}\EType.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+#else
 Name: "{autoprograms}\EType 单词与句子"; Filename: "{app}\EType.exe"; WorkingDir: "{app}"
 Name: "{autodesktop}\EType 单词与句子"; Filename: "{app}\EType.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 Name: "{autoprograms}\EType 本地服务"; Filename: "http://127.0.0.1:49181/"
+#endif
 
 [Run]
 Filename: "{app}\EType.exe"; Description: "打开 EType 设置与试用"; Flags: nowait postinstall skipifsilent runasoriginaluser
@@ -93,8 +137,13 @@ chinesesimp.FinishedLabelNoIcons=EType 已安装。请使用 Windows 输入法�
 [Code]
 const
   OwnUninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#PackageId}_is1';
+#ifdef OnlineEdition
+  ETypeClassKey = 'Software\Classes\CLSID\{7BD6247C-64A2-4AA9-B702-C731413CD0A2}\InprocServer32';
+  LegacyClassKey = ETypeClassKey;
+#else
   ETypeClassKey = 'Software\Classes\CLSID\{B61C1452-3E9A-4616-9EA3-18B4E5862CA4}\InprocServer32';
   LegacyClassKey = 'Software\Classes\CLSID\{DC168F35-18EA-4EC5-B391-C4430C3F3ED9}\InprocServer32';
+#endif
   ETypeMarker = 'etype-installation.id';
 var
   ExistingDir: String;
@@ -293,15 +342,30 @@ begin
 end;
 
 function InitializeUninstall(): Boolean;
-var Attempt: Integer;
+var Attempt, ExitCode: Integer;
 begin
   Result := MarkerMatches(ExpandConstant('{app}')) and not HasReparseParent(ExpandConstant('{app}'));
   if not Result then
     SuppressibleMsgBox('安装标记缺失或目录已变为链接。为防止误删，请恢复原安装目录后重试。', mbError, MB_OK, IDOK);
   if Result then begin
+#if defined(OnlineEdition) && !defined(InstallerTestMode)
+    Result := FileUnlocked(ExpandConstant('{app}\EType.exe')) and
+      FileUnlocked(ExpandConstant('{app}\x64\EType.dll')) and
+      FileUnlocked(ExpandConstant('{app}\x86\EType.dll'));
+    if Result then
+      Result := Exec(ExpandConstant('{app}\EType.exe'), '--stop-online-worker', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ExitCode) and (ExitCode = 0);
+    if not Result then begin
+      SuppressibleMsgBox('EType 在线版正在使用或后台服务未能关闭。请切换到其他输入法并关闭使用在线版的软件，再重试；尚未取消注册或删除文件。', mbError, MB_OK, IDOK);
+      exit;
+    end;
+#endif
     for Attempt := 1 to 10 do begin
       Result := FileUnlocked(ExpandConstant('{app}\EType.exe')) and
+#ifdef OnlineEdition
+        FileUnlocked(ExpandConstant('{app}\runtime\python\pythonw.exe')) and
+#else
         FileUnlocked(ExpandConstant('{app}\runtime\ETypeService.exe')) and
+#endif
         FileUnlocked(ExpandConstant('{app}\x64\EType.dll')) and
         FileUnlocked(ExpandConstant('{app}\x86\EType.dll'));
       if Result then break;

@@ -16,3 +16,4 @@ drone-concept/
 *.pfx
 *.pem
 releases/EType-0.2.*-Setup.exe
+releases/EType-0.3.*-Online-Setup.exe

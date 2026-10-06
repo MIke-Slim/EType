@@ -77,7 +77,12 @@ def main():
                 else:
                     data = json.loads(payload)
                     text = data.get('text', '')
-                if self.path in ('/word', '/native/word'):
+                if self.path == '/native/shutdown':
+                    if Path(text).resolve() != ROOT.resolve():
+                        return self.send(409, {'error': '服务属于另一个安装目录'})
+                    self.send(200, {'stopping': True})
+                    threading.Thread(target=self.server.shutdown, daemon=True).start()
+                elif self.path in ('/word', '/native/word'):
                     entry = dictionary.lookup(text)
                     if native:
                         if not entry:

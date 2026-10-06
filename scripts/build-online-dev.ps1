@@ -1,5 +1,5 @@
 # Development compilation only. Does not register a TIP or produce an installer.
-param([string]$ToolchainPath,[switch]$InstalledTest)
+param([string]$ToolchainPath,[switch]$InstalledTest,[switch]$OnlineRelease)
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $projectRoot
@@ -9,9 +9,11 @@ elseif(Test-Path -LiteralPath 'tools'){$toolchain=Get-ChildItem tools -Directory
 if(-not $toolchain){throw 'Missing development toolchain'}
 $output=Join-Path $projectRoot 'build/online-lite/native'
 if($InstalledTest){$output=Join-Path $projectRoot 'build/online-test/native'}
+if($OnlineRelease){$output=Join-Path $projectRoot 'build/online-release/native'}
 New-Item -ItemType Directory -Force $output,(Join-Path $output 'x64'),(Join-Path $output 'x86'),(Join-Path $output 'assets') | Out-Null
 $flags=@('-std=c++17','-O2','-Wall','-Wextra','-DUNICODE','-D_UNICODE','-D_WIN32_WINNT=0x0A00','-DETYPE_ONLINE','-static','-Isrc','-mguard=cf')
 if($InstalledTest){$flags+='-DETYPE_ONLINE_TEST'}
+if($OnlineRelease){$flags+='-DETYPE_ONLINE_RELEASE'}
 $libs=@('-lole32','-loleaut32','-luuid','-lshell32','-luser32','-lgdi32','-ladvapi32','-lwinhttp','-lwinmm')
 foreach($architecture in @('x64','x86')){
     $target=if($architecture -eq 'x64'){'x86_64'}else{'i686'}

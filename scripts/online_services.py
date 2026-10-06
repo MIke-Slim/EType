@@ -11,7 +11,7 @@ import threading
 import urllib.parse
 import urllib.request
 
-DICTIONARY_URL = 'https://raw.githubusercontent.com/MIke-Slim/EType/codex/online-lite/online-data/v1/'
+DICTIONARY_URL = 'https://raw.githubusercontent.com/MIke-Slim/EType/6fee7022fc3c990c1e5319852009a7682207251e/online-data/v1/'
 MYMEMORY_URL = 'https://api.mymemory.translated.net/get'
 
 def spelling_distance(a, b, limit):

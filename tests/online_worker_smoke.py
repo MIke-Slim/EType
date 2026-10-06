@@ -33,7 +33,18 @@ try:
     except urllib.error.HTTPError as error:
         assert error.code == 400
         assert json.loads(error.read())['error']
-    print('Windowless worker: health and error responses passed')
+    request = urllib.request.Request('http://127.0.0.1:49184/native/shutdown', b'wrong-folder', headers={'X-EType-Lab': '1'})
+    try:
+        opener.open(request, timeout=2)
+        raise AssertionError('Foreign installation stopped this service')
+    except urllib.error.HTTPError as error:
+        assert error.code == 409
+    request = urllib.request.Request('http://127.0.0.1:49184/native/shutdown', str(ROOT).encode('utf-8'), headers={'X-EType-Lab': '1'})
+    with opener.open(request, timeout=2) as response:
+        assert json.load(response)['stopping']
+    process.wait(timeout=5)
+    print('Windowless worker: health, error and owned shutdown passed')
 finally:
-    process.terminate()
+    if process.poll() is None:
+        process.terminate()
     process.wait(timeout=5)

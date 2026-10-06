@@ -450,6 +450,9 @@ static int uiSelfTest(const std::wstring& report){
 int WINAPI wWinMain(HINSTANCE inst,HINSTANCE,LPWSTR,int show){
     instance=inst;SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     root=moduleRoot(inst);int argc;auto argv=CommandLineToArgvW(GetCommandLineW(),&argc);
+#ifdef ETYPE_ONLINE
+    if(argc>=2&&wcscmp(argv[1],L"--stop-online-worker")==0){bool ok=stopOnlineWorker();LocalFree(argv);CoUninitialize();return ok?0:1;}
+#endif
     if(argc>=3&&wcscmp(argv[1],L"--speak")==0){
         auto settings=readSettings();bool ok=false;
         HANDLE mutex=CreateMutexW(nullptr,FALSE,L"Local\\" ETYPE_SCOPE L".Speech.Mutex.v2");
@@ -487,6 +490,9 @@ else try{auto wav=speechLocal(utf8(argv[2]),settings.maleVoice,settings.slowSpee
     DWORD windowStyle=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_VSCROLL;
     RECT area{0,0,px(776),std::min(px(802),(int)(workArea.bottom-workArea.top-80))};AdjustWindowRectEx(&area,windowStyle,FALSE,0);
     mainWindow=CreateWindowExW(0,wc.lpszClassName,ETypeName,windowStyle,CW_USEDEFAULT,CW_USEDEFAULT,area.right-area.left,area.bottom-area.top,nullptr,nullptr,inst,nullptr);
+#ifdef ETYPE_ONLINE_RELEASE
+    SetWindowTextW(mainWindow,L"EType 0.3.0 · 在线版");
+#endif
     if(!renderFolder.empty()){int code=render(renderFolder);CoUninitialize();return code;}
     if(!uiReport.empty()){int code=uiSelfTest(uiReport);CoUninitialize();return code;}
     ShowWindow(mainWindow,show);UpdateWindow(mainWindow);MSG msg;while(GetMessageW(&msg,nullptr,0,0)>0){

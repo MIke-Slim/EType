@@ -11,7 +11,9 @@
 #include <shlobj.h>
 namespace etype {
 #ifdef ETYPE_ONLINE
-#ifdef ETYPE_ONLINE_TEST
+#ifdef ETYPE_ONLINE_RELEASE
+static constexpr INTERNET_PORT workerPort=49185;
+#elif defined(ETYPE_ONLINE_TEST)
 static constexpr INTERNET_PORT workerPort=49183;
 #else
 static constexpr INTERNET_PORT workerPort=49182;
@@ -143,7 +145,7 @@ static std::vector<unsigned char> postCancellable(const std::string& text,const 
     return result;
 }
 static std::vector<unsigned char> post(const wchar_t* path,const std::string& text,const std::wstring& extra,size_t limit) {
-    if(text.empty()||text.size()>500)throw std::runtime_error("Invalid input length");
+    if(text.empty()||text.size()>(wcscmp(path,L"/native/shutdown")==0?1024:500))throw std::runtime_error("Invalid input length");
     ensureWorker();
     HttpHandle session(WinHttpOpen(L"EType/0.2-dev",WINHTTP_ACCESS_TYPE_NO_PROXY,nullptr,nullptr,0));
     WinHttpSetTimeouts(session.value,1000,1000,5000,60000);
@@ -166,6 +168,22 @@ static std::vector<unsigned char> post(const wchar_t* path,const std::string& te
         result.resize(start+read);
     }
     return result;
+}
+bool stopOnlineWorker(){
+#ifdef ETYPE_ONLINE
+    try{
+        if(!workerReady())return true;
+        HMODULE module=nullptr;wchar_t path[32768]{};
+        if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCWSTR)&stopOnlineWorker,&module)||!GetModuleFileNameW(module,path,32768))return false;
+        auto root=std::filesystem::path(path).parent_path();
+        if(root.filename()==L"x64"||root.filename()==L"x86")root=root.parent_path();
+        post(L"/native/shutdown",utf8(root.wstring()),L"",1024);
+        auto deadline=GetTickCount64()+5000;
+        while(workerReady()){if(GetTickCount64()>deadline)return false;Sleep(100);}return true;
+    }catch(...){return false;}
+#else
+    return false;
+#endif
 }
 std::vector<Candidate> translateLocal(const std::string& text) {
     auto bytes=post(L"/native/translate",text,L"",16384);

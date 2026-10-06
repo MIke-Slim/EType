@@ -3,12 +3,18 @@ import json
 from pathlib import Path
 import shutil
 import sys
+import argparse
+import subprocess
+import hashlib
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET = ROOT / 'build/online-test/package'
+parser = argparse.ArgumentParser()
+parser.add_argument('--release', action='store_true')
+args = parser.parse_args()
+TARGET = ROOT / ('build/online-release/package' if args.release else 'build/online-test/package')
 if TARGET.exists():
     raise SystemExit('Test package directory already exists; choose a new version before replacing it')
-native = ROOT / 'build/online-test/native'
+native = ROOT / ('build/online-release/native' if args.release else 'build/online-test/native')
 base = Path(sys.base_prefix)
 sites = Path(sys.prefix) / 'Lib/site-packages'
 TARGET.mkdir(parents=True)
@@ -39,6 +45,16 @@ shutil.copy2(ROOT / 'assets/online-lab.html', TARGET / 'assets/online-lab.html')
 manifest = {'variant': 'online-test', 'port': 49183, 'clsid': '{2508C9AF-571F-45AC-8709-5CD3C0B14366}',
     'profile': '{078CBB5E-8CB6-4CAE-B5E3-6524A3485A53}', 'name': 'EType 在线测试版',
     'source_commit': '6ad597b plus installation integration', 'python': sys.version}
-(TARGET / 'online-test-manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+if args.release:
+    manifest.update(variant='online-release', version='0.3.0', port=49185,
+        clsid='{7BD6247C-64A2-4AA9-B702-C731413CD0A2}', profile='{A25BF57C-145F-4AF6-88C8-13B8CBA492FB}', name='EType 在线版',
+        source_commit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip())
+    (TARGET / '使用说明.txt').write_text((ROOT / 'docs/在线测试版使用说明.txt').read_text(encoding='utf-8').replace('EType 在线测试版','EType 在线版').replace('当前是直接安装的测试版，没有生成 EXE 安装包。','本版本提供独立 EXE 安装包，可自主选择安装路径。'), encoding='utf-8')
+    licenses = TARGET / 'licenses'
+    licenses.mkdir()
+    shutil.copy2(ROOT / 'online-data/v1/ECDICT-LICENSE', licenses / 'ECDICT-LICENSE.txt')
+    manifest['files'] = {str(file.relative_to(TARGET)).replace('\\','/'): hashlib.sha256(file.read_bytes()).hexdigest()
+        for file in TARGET.rglob('*') if file.is_file()}
+(TARGET / ('package-manifest.json' if args.release else 'online-test-manifest.json')).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
 total = sum(file.stat().st_size for file in TARGET.rglob('*') if file.is_file())
 print(json.dumps({'path': str(TARGET), 'bytes': total, 'MiB': round(total / 1048576, 2)}))

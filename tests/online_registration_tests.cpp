@@ -10,8 +10,8 @@ int wmain(int argc,wchar_t** argv){
     wchar_t clsid[64]{};StringFromGUID2(ETypeClsid,clsid,64);auto key=std::wstring(L"Software\\Classes\\CLSID\\")+clsid+L"\\InprocServer32";
     wchar_t path[32768]{};DWORD bytes=sizeof(path);
     auto status=RegGetValueW(HKEY_LOCAL_MACHINE,key.c_str(),nullptr,RRF_RT_REG_SZ,nullptr,path,&bytes);
-    auto expected=std::filesystem::path(argv[1])/L"x64"/L"EType.dll";
-    check(status==ERROR_SUCCESS&&_wcsicmp(path,expected.c_str())==0,"x64 installed registration path");
+    auto expected=std::filesystem::path(argv[1])/(sizeof(void*)==8?L"x64":L"x86")/L"EType.dll";
+    check(status==ERROR_SUCCESS&&_wcsicmp(path,expected.c_str())==0,"installed registration path matches process architecture");
     ITfTextInputProcessor* tip=nullptr;auto hr=CoCreateInstance(ETypeClsid,nullptr,CLSCTX_INPROC_SERVER,IID_ITfTextInputProcessor,(void**)&tip);
     check(SUCCEEDED(hr)&&tip,"Windows creates the installed online input service");if(tip)tip->Release();
     ITfInputProcessorProfileMgr* mgr=nullptr;hr=CoCreateInstance(CLSID_TF_InputProcessorProfiles,nullptr,CLSCTX_INPROC_SERVER,IID_ITfInputProcessorProfileMgr,(void**)&mgr);

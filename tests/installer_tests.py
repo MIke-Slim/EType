@@ -12,6 +12,7 @@ import subprocess
 import time
 import uuid
 import winreg
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / 'build/standalone/EType'
@@ -21,6 +22,13 @@ CLSID = r'Software\Classes\CLSID\{B61C1452-3E9A-4616-9EA3-18B4E5862CA4}'
 TIP = r'Software\Microsoft\CTF\TIP\{B61C1452-3E9A-4616-9EA3-18B4E5862CA4}'
 LEGACY_CLSID = r'Software\Classes\CLSID\{DC168F35-18EA-4EC5-B391-C4430C3F3ED9}'
 LEGACY_TIP = r'Software\Microsoft\CTF\TIP\{DC168F35-18EA-4EC5-B391-C4430C3F3ED9}'
+ONLINE = '--online' in sys.argv
+if ONLINE:
+    PACKAGE = ROOT / 'build/online-release/package'
+    EXE = ROOT / 'build/installer-tests/EType-Online-Setup-Validation.exe'
+    KEY = r'Software\Microsoft\Windows\CurrentVersion\Uninstall\EType.OnlineInstallerValidation_is1'
+    CLSID = r'Software\Classes\CLSID\{7BD6247C-64A2-4AA9-B702-C731413CD0A2}'
+    TIP = r'Software\Microsoft\CTF\TIP\{7BD6247C-64A2-4AA9-B702-C731413CD0A2}'
 
 
 def registry_tree(hive, path, view):
@@ -42,7 +50,9 @@ def registry_tree(hive, path, view):
 def system_snapshot():
     return [registry_tree(hive, key, view)
             for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER)
-            for key in (CLSID, TIP, LEGACY_CLSID, LEGACY_TIP)
+            for key in (CLSID, TIP, LEGACY_CLSID, LEGACY_TIP,
+                r'Software\Classes\CLSID\{B61C1452-3E9A-4616-9EA3-18B4E5862CA4}',
+                r'Software\Classes\CLSID\{2508C9AF-571F-45AC-8709-5CD3C0B14366}')
             for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY)]
 
 
@@ -137,10 +147,10 @@ def main():
               os.path.normcase(os.path.normpath(str(selected))))
         manifest = json.loads((PACKAGE / 'package-manifest.json').read_text(encoding='utf-8'))
         check('installed_payload_matches_every_manifest_hash', all(
-            (selected / name).is_file() and sha(selected / name) == evidence['sha256']
+            (selected / name).is_file() and sha(selected / name) == (evidence if isinstance(evidence,str) else evidence['sha256'])
             for name, evidence in manifest['files'].items()))
         check('uninstaller_placed_in_selected_directory', (selected / 'unins000.exe').is_file())
-        for script in ('install.ps1', 'uninstall.ps1'):
+        for script in (() if ONLINE else ('install.ps1', 'uninstall.ps1')):
             result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
                                      '-File', str(selected / script), '-Quiet', '-ValidateOnly',
                                      '-InstallDir', str(selected)], capture_output=True, timeout=30)
@@ -150,10 +160,13 @@ def main():
         env = dict(os.environ, ETYPE_HEADLESS_TEST='1',
                    ETYPE_TEST_SETTINGS=str(run_root / 'isolated-test-settings.ini'))
         report = run_root / 'installed-ui-selftest.json'
-        preview = subprocess.run([str(selected / 'EType.exe'), '--ui-selftest', str(report)],
-                                 env=env, timeout=45, capture_output=True)
+        preview = subprocess.run([str(selected / 'EType.exe'), '--online-selftest' if ONLINE else '--ui-selftest', str(report)],
+                                 env=env, timeout=180 if ONLINE else 45, capture_output=True)
         check('actual_preview_runs_from_custom_path', preview.returncode == 0 and
               json.loads(report.read_text(encoding='utf-8')).get('passed'))
+        if ONLINE:
+            stopped = subprocess.run([str(selected / 'EType.exe'), '--stop-online-worker'], timeout=20)
+            check('uninstaller_can_stop_only_its_own_online_worker', stopped.returncode == 0)
         check('reject_relocation_of_existing_installation', install(run_root / 'other') != 0)
         check('relocation_rejection_preserves_original_installation', (selected / 'EType.exe').is_file()
               and not (run_root / 'other/EType.exe').exists())
@@ -180,14 +193,14 @@ def main():
                   (selected / 'EType.exe').is_file() and installed_path() is not None)
         finally:
             kernel.CloseHandle(handle)
-        service = selected / 'runtime/ETypeService.exe'
+        service = selected / ('runtime/python/pythonw.exe' if ONLINE else 'runtime/ETypeService.exe')
         handle = kernel.CreateFileW(str(service), 0x80000000, 1, None, 3, 0x80, None)
         if handle == ctypes.c_void_p(-1).value:
             raise ctypes.WinError(ctypes.get_last_error())
         try:
             check('reject_uninstall_while_local_service_is_locked', run(selected / 'unins000.exe') != 0)
             check('service_lock_rejection_preserves_models_and_registration_record',
-                  (selected / 'models/Qwen3-4B-Q4_K_M.gguf').is_file() and installed_path() is not None)
+                  (service if ONLINE else selected / 'models/Qwen3-4B-Q4_K_M.gguf').is_file() and installed_path() is not None)
         finally:
             kernel.CloseHandle(handle)
         marker = selected / 'etype-installation.id'
@@ -217,7 +230,7 @@ def main():
                     'installer_sha256': sha(EXE),
                     'installer_source_sha256': sha(ROOT / 'installer/EType.iss'),
                     'package_manifest_sha256': sha(PACKAGE / 'package-manifest.json')}
-        (ROOT / 'build/installer-test-results.json').write_text(
+        (ROOT / ('build/online-installer-test-results.json' if ONLINE else 'build/installer-test-results.json')).write_text(
             json.dumps(evidence, ensure_ascii=False, indent=2), encoding='utf-8')
     print(json.dumps({'checks': len(checks), 'failures': sum(not c['passed'] for c in checks),
                       'test_workspace': str(run_root)}, ensure_ascii=False))
